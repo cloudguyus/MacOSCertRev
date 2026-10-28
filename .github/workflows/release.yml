@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test
+        run: |
+          xcodebuild test \
+            -project MacOSCertRev.xcodeproj \
+            -scheme MacOSCertRev \
+            -configuration Debug \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build/DerivedData
+
+      - name: Build
+        run: |
+          xcodebuild build \
+            -project MacOSCertRev.xcodeproj \
+            -scheme MacOSCertRev \
+            -configuration Release \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_STYLE=Manual
+
+      - name: Package
+        id: package
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          app="build/DerivedData/Build/Products/Release/CertRev.app"
+          short="$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")"
+          if [ "$short" != "$version" ]; then
+            echo "CFBundleShortVersionString is $short, tag is $version" >&2
+            exit 1
+          fi
+          # Ad-hoc signature until a Developer ID certificate is added.
+          codesign --verify --verbose=2 "$app"
+          ditto -c -k --keepParent "$app" "CertRev-${version}.zip"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(shasum -a 256 "CertRev-${version}.zip" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            "CertRev-${{ steps.package.outputs.version }}.zip" \
+            --title "CertRev ${{ steps.package.outputs.version }}" \
+            --notes "CertRev ${{ steps.package.outputs.version }} for macOS 15 or later."
+
+      - name: Update Homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.package.outputs.version }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "HOMEBREW_TAP_TOKEN is not set. The GitHub Release is already published." >&2
+            exit 1
+          fi
+          git clone --depth 1 "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/cloudguyus/homebrew-tap.git" tap
+          python3 scripts/update-homebrew-cask.py tap/Casks/certrev.rb
+          git -C tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C tap config user.name "github-actions[bot]"
+          git -C tap add Casks/certrev.rb
+          git -C tap commit -m "certrev ${VERSION}"
+          git -C tap push origin HEAD:main
