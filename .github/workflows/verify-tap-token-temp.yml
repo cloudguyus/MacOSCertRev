@@ -1,0 +1,120 @@
+name: Verify tap token (temp)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prove HOMEBREW_TAP_TOKEN scope
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "HOMEBREW_TAP_TOKEN is empty" >&2
+            exit 1
+          fi
+
+          auth_hdr() {
+            printf 'Authorization: Bearer %s' "$HOMEBREW_TAP_TOKEN"
+          }
+
+          echo "=== Token response headers (selected) ==="
+          # Capture headers only; never print body or Authorization.
+          hdrs=$(mktemp)
+          curl -sS -D "$hdrs" -o /dev/null \
+            -H "$(auth_hdr)" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/user
+          # Print only the two requested headers (case-insensitive).
+          awk 'BEGIN{IGNORECASE=1}
+            /^x-oauth-scopes:/ {print}
+            /^github-authentication-token-expiration:/ {print}
+          ' "$hdrs"
+          rm -f "$hdrs"
+
+          echo "=== Read tap main ==="
+          tap_main=$(curl -sS \
+            -H "$(auth_hdr)" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/cloudguyus/homebrew-tap/git/ref/heads/main)
+          tap_sha=$(printf '%s' "$tap_main" | python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])')
+          echo "tap main sha=$tap_sha"
+
+          branch="token-check-${GITHUB_RUN_ID}"
+          echo "branch=$branch"
+
+          echo "=== Create tap branch (expect 201) ==="
+          tap_create_code=$(curl -sS -o /tmp/tap_create.json -w '%{http_code}' \
+            -X POST \
+            -H "$(auth_hdr)" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Content-Type: application/json" \
+            https://api.github.com/repos/cloudguyus/homebrew-tap/git/refs \
+            -d "{\"ref\":\"refs/heads/${branch}\",\"sha\":\"${tap_sha}\"}")
+          echo "tap_create_http=$tap_create_code"
+          if [ "$tap_create_code" != "201" ]; then
+            echo "tap create body:" >&2
+            cat /tmp/tap_create.json >&2
+            exit 1
+          fi
+
+          echo "=== Delete tap branch (expect 204) ==="
+          tap_delete_code=$(curl -sS -o /tmp/tap_delete.json -w '%{http_code}' \
+            -X DELETE \
+            -H "$(auth_hdr)" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/cloudguyus/homebrew-tap/git/refs/heads/${branch}")
+          echo "tap_delete_http=$tap_delete_code"
+          if [ "$tap_delete_code" != "204" ]; then
+            echo "tap delete body:" >&2
+            cat /tmp/tap_delete.json >&2 || true
+            exit 1
+          fi
+
+          echo "=== Read app main ==="
+          app_main=$(curl -sS \
+            -H "$(auth_hdr)" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/cloudguyus/MacOSCertRev/git/ref/heads/main)
+          app_sha=$(printf '%s' "$app_main" | python3 -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])' 2>/dev/null || true)
+          if [ -z "${app_sha:-}" ]; then
+            # Reading may also be refused; use known public sha from GITHUB_SHA parent or fail soft.
+            echo "app main read did not yield sha (may be expected for fine-grained token)"
+            app_sha="${GITHUB_SHA}"
+          fi
+          echo "app sha used=$app_sha"
+
+          echo "=== Create app branch (expect refusal, not 201) ==="
+          app_create_code=$(curl -sS -o /tmp/app_create.json -w '%{http_code}' \
+            -X POST \
+            -H "$(auth_hdr)" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -H "Content-Type: application/json" \
+            https://api.github.com/repos/cloudguyus/MacOSCertRev/git/refs \
+            -d "{\"ref\":\"refs/heads/${branch}\",\"sha\":\"${app_sha}\"}")
+          echo "app_create_http=$app_create_code"
+          echo "app_create_message=$(python3 -c 'import json; print(json.load(open("/tmp/app_create.json")).get("message","(no message)"))' 2>/dev/null || echo '(unparsed)')"
+
+          if [ "$app_create_code" = "201" ]; then
+            echo "UNEXPECTED: token could write to app repo; deleting stray branch" >&2
+            curl -sS -o /dev/null -X DELETE \
+              -H "$(auth_hdr)" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/cloudguyus/MacOSCertRev/git/refs/heads/${branch}" || true
+            exit 1
+          fi
+
+          echo "PASS: tap create=201 delete=204; app create refused ($app_create_code)"
