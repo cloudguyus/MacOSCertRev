@@ -6,7 +6,9 @@ import UniformTypeIdentifiers
 @MainActor
 @Observable
 final class InspectorModel {
-    static let shared = InspectorModel()
+    static let shared = InspectorModel(evaluateTrust: { @Sendable ders, leafIndex, options in
+        await TrustEvaluator.evaluate(ders: ders, leafIndex: leafIndex, options: options)
+    })
 
     private(set) var certificates: [ParsedCertificate] = []
     private(set) var fileName: String?
@@ -21,6 +23,15 @@ final class InspectorModel {
     var selectedFieldID: String?
 
     private var trustGeneration = 0
+    private var trustEvaluationTask: Task<Void, Never>?
+    private let evaluateTrust: @Sendable ([Data], Int, TrustEvaluationOptions) async -> TrustReport
+
+    /// Tests pass a stand-in so a trust result can finish after a later open has already failed.
+    init(
+        evaluateTrust: @escaping @Sendable ([Data], Int, TrustEvaluationOptions) async -> TrustReport
+    ) {
+        self.evaluateTrust = evaluateTrust
+    }
 
     var selectedCertificate: ParsedCertificate? {
         guard let selectedID else { return nil }
@@ -66,6 +77,14 @@ final class InspectorModel {
             trust = nil
             scheduleTrustEvaluation()
         } catch {
+            // Drop the certificate already on screen, and retire the evaluation in
+            // flight so it cannot put that certificate's trust result back.
+            trustGeneration += 1
+            certificates = []
+            fileName = nil
+            selectedID = nil
+            selectedFieldID = nil
+            trust = nil
             errorMessage = error.localizedDescription
         }
     }
@@ -97,6 +116,13 @@ final class InspectorModel {
         pasteboard.setString(value, forType: .string)
     }
 
+    /// Waits until the evaluation started by the latest successful open finishes.
+    /// A failed open leaves that task in place so a test can see it decline to
+    /// write a trust result for the certificate that was just cleared.
+    func waitForTrustEvaluation() async {
+        await trustEvaluationTask?.value
+    }
+
     private func scheduleTrustEvaluation() {
         guard !certificates.isEmpty, let selectedID, let leafIndex = certificates.firstIndex(where: { $0.id == selectedID }) else {
             trust = nil
@@ -109,9 +135,12 @@ final class InspectorModel {
             networkFetchAllowed: fetchIntermediates,
             anchorDERs: nil
         )
-        Task {
-            let report = await TrustEvaluator.evaluate(ders: ders, leafIndex: leafIndex, options: options)
-            guard generation == trustGeneration else { return }
+        let evaluate = evaluateTrust
+        trustEvaluationTask = Task {
+            let report = await evaluate(ders, leafIndex, options)
+            // A failed open advances `trustGeneration` and clears `certificates`.
+            // Either one means this result belongs to a file that is no longer open.
+            guard generation == trustGeneration, !certificates.isEmpty else { return }
             trust = report
         }
     }
