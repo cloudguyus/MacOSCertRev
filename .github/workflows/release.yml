@@ -28,10 +28,11 @@ jobs:
       - name: Force swift-crypto to link statically
         run: |
           set -euo pipefail
-          # Resolve above creates the checkout. This step fails the job if the
-          # patch does not apply. The scheme pre-action runs the same script,
-          # and a clean build used to skip it before the checkout existed.
-          DERIVED_DATA_DIR=build/DerivedData scripts/force-static-crypto.sh
+          # Resolve above creates the checkout. This step patches it before
+          # xcodebuild runs, and STRICT fails the job if the patch cannot be
+          # applied. The scheme pre-action does not resolve packages and does
+          # not fail when the checkout is still absent.
+          FORCE_STATIC_CRYPTO_STRICT=1 DERIVED_DATA_DIR=build/DerivedData scripts/force-static-crypto.sh
 
       - name: Build
         run: |
