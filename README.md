@@ -25,7 +25,7 @@ CertRev keeps the certificate in memory. It does not add it to a keychain.
 
 ## Requirements
 
-macOS 15 or later. The published app includes Apple silicon and Intel.
+macOS 15 or later. The published app is a universal binary for Apple silicon (arm64) and Intel (x86_64).
 
 ## Install with Homebrew
 
@@ -59,4 +59,4 @@ MIT. Copyright (c) 2026 cloudguyus. Copies of this code keep that copyright noti
 
 ## Publishing a version
 
-Bump `MARKETING_VERSION` in the Xcode project so it matches the tag, commit, and push a tag such as `v1.0.1`. The release workflow builds the app, publishes `CertRev-1.0.1.zip` on GitHub, and updates the Homebrew tap checksum.
+Bump `MARKETING_VERSION` in the Xcode project so it matches the tag, commit, and push a tag such as `v1.0.1`. The release workflow builds a universal app (arm64 and x86_64), publishes `CertRev-1.0.1.zip` on GitHub, and updates the Homebrew tap checksum.

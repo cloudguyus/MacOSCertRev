@@ -18,25 +18,45 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      - name: Resolve packages
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project MacOSCertRev.xcodeproj \
+            -scheme MacOSCertRev \
+            -derivedDataPath build/DerivedData
+
+      - name: Force swift-crypto to link statically
+        run: |
+          set -euo pipefail
+          # Resolve above creates the checkout. This step fails the job if the
+          # patch does not apply. The scheme pre-action runs the same script,
+          # and a clean build used to skip it before the checkout existed.
+          DERIVED_DATA_DIR=build/DerivedData scripts/force-static-crypto.sh
+
+      - name: Build
+        run: |
+          # generic/platform=macOS with ARCHS produces one app containing arm64 and x86_64.
+          # The static-library patch is in Package.swift, so both slices use it.
+          xcodebuild build \
+            -project MacOSCertRev.xcodeproj \
+            -scheme MacOSCertRev \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_STYLE=Manual \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO
+
       - name: Test
         run: |
+          # Tests execute on the runner. arm64 is that machine; the Release app above is universal.
           xcodebuild test \
             -project MacOSCertRev.xcodeproj \
             -scheme MacOSCertRev \
             -configuration Debug \
             -destination 'platform=macOS,arch=arm64' \
             -derivedDataPath build/DerivedData
-
-      - name: Build
-        run: |
-          xcodebuild build \
-            -project MacOSCertRev.xcodeproj \
-            -scheme MacOSCertRev \
-            -configuration Release \
-            -destination 'platform=macOS,arch=arm64' \
-            -derivedDataPath build/DerivedData \
-            CODE_SIGN_IDENTITY="-" \
-            CODE_SIGN_STYLE=Manual
 
       - name: Package
         id: package
@@ -49,6 +69,38 @@ jobs:
             echo "CFBundleShortVersionString is $short, tag is $version" >&2
             exit 1
           fi
+          binary="$app/Contents/MacOS/CertRev"
+          if [ ! -f "$binary" ]; then
+            echo "App binary not found: $binary" >&2
+            exit 1
+          fi
+          require_slices() {
+            local file="$1"
+            local archs="$2"
+            local required
+            for required in arm64 x86_64; do
+              case " $archs " in
+                *" $required "*) ;;
+                *)
+                  echo "Missing $required slice: $file (lipo -archs: $archs)" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+          }
+          archs="$(lipo -archs "$binary")"
+          echo "lipo -archs $binary: $archs"
+          require_slices "$binary" "$archs"
+          while IFS= read -r -d '' candidate; do
+            if [ "$candidate" = "$binary" ]; then
+              continue
+            fi
+            if ! candidate_archs="$(lipo -archs "$candidate" 2>/dev/null)"; then
+              continue
+            fi
+            echo "lipo -archs $candidate: $candidate_archs"
+            require_slices "$candidate" "$candidate_archs"
+          done < <(find "$app" -type f -print0)
           # Ad-hoc signature until a Developer ID certificate is added.
           codesign --verify --verbose=2 "$app"
           ditto -c -k --keepParent "$app" "CertRev-${version}.zip"
