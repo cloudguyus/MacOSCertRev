@@ -7,10 +7,26 @@
 # The edit is in Package.swift, which is shared by every architecture. One
 # patch covers both slices of a universal (arm64 and x86_64) build.
 #
-# This exits non-zero when it cannot find swift-crypto or the library
-# declarations are neither the upstream lines nor already static. A skipped
-# patch used to exit 0, and the release continued until the link failed.
+# Two different directories are called DerivedData:
+# - The release workflow's -derivedDataPath (build/DerivedData) contains
+#   SourcePackages directly. FORCE_STATIC_CRYPTO_STRICT=1, or that kind of
+#   path with no MacOSCertRev-<hash> child, must fail when the checkout is
+#   missing. A home DerivedData checkout must not hide that miss.
+# - A scheme pre-action exports DERIVED_DATA_DIR as the DerivedData container
+#   (~/Library/Developer/Xcode/DerivedData). SourcePackages lives in
+#   MacOSCertRev-<hash> under that container. The hash folder is also what
+#   BUILD_DIR / SYMROOT / OBJROOT point at when Xcode has filled them in.
+#
+# On a clean local build the pre-action runs before Xcode checks the packages
+# out. Xcode 27 fails the build when this script exits non-zero, so the
+# pre-action resolves packages once and then patches. The strict release path
+# does not do that: a missing checkout is a failed release.
 set -euo pipefail
+
+if [ "${FORCE_STATIC_CRYPTO_RESOLVING:-}" = 1 ]; then
+  # xcodebuild -resolvePackageDependencies invokes this pre-action again.
+  exit 0
+fi
 
 patch_one() {
   local package_swift="$1"
@@ -56,13 +72,21 @@ else:
 PY
 }
 
-# BUILD_DIR and SYMROOT end in /Build/Products. OBJROOT ends in
-# /Build/Intermediates.noindex. The package checkout is the parent of Build.
+package_swift_for() {
+  printf '%s\n' "${1%/}/SourcePackages/checkouts/swift-crypto/Package.swift"
+}
+
+# BUILD_DIR and SYMROOT end in /Build/Products, sometimes with /Debug after
+# that. OBJROOT ends in /Build/Intermediates.noindex. The project derived data
+# root is the directory that contains Build, not the DerivedData container.
 derived_data_from_build_path() {
   local path="${1%/}"
   case "$path" in
-    */Build/Products|*/Build/Intermediates.noindex)
-      dirname "$(dirname "$path")"
+    */Build/Products|*/Build/Products/*)
+      printf '%s\n' "${path%%/Build/Products*}"
+      ;;
+    */Build/Intermediates.noindex|*/Build/Intermediates.noindex/*)
+      printf '%s\n' "${path%%/Build/Intermediates.noindex*}"
       ;;
     *)
       return 1
@@ -95,75 +119,201 @@ add_root() {
   roots+=("$root")
 }
 
-roots=()
-# When the caller names a DerivedData directory, that directory is the only
-# one that counts. A checkout under ~/Library must not hide a miss there.
-explicit=0
-
-if [ -n "${DERIVED_DATA_DIR:-}" ]; then
-  explicit=1
-  add_root "$DERIVED_DATA_DIR"
-else
-  if [ -n "${BUILD_DIR:-}" ]; then
-    if inferred="$(derived_data_from_build_path "$BUILD_DIR")"; then
-      explicit=1
-      add_root "$inferred"
-    fi
-  fi
-  if [ -n "${SYMROOT:-}" ]; then
-    if inferred="$(derived_data_from_build_path "$SYMROOT")"; then
-      explicit=1
-      add_root "$inferred"
-    fi
-  fi
-  if [ -n "${OBJROOT:-}" ]; then
-    if inferred="$(derived_data_from_build_path "$OBJROOT")"; then
-      explicit=1
-      add_root "$inferred"
-    fi
-  fi
-fi
-
-if [ "$explicit" -eq 0 ]; then
-  script_dir="$(cd "$(dirname "$0")" && pwd)"
-  repo_derived="$(cd "$script_dir/.." && pwd)/build/DerivedData"
-  if [ -d "$repo_derived" ]; then
-    add_root "$repo_derived"
-  fi
+has_project_children() {
+  local root="$1"
+  local child
+  [ -d "$root" ] || return 1
   shopt -s nullglob
-  for derived in "$HOME/Library/Developer/Xcode/DerivedData"/MacOSCertRev-*; do
-    add_root "$derived"
-  done
-fi
-
-if [ "${#roots[@]}" -eq 0 ]; then
-  echo "error: force-static-crypto.sh found no DerivedData directory to search." >&2
-  echo "Set DERIVED_DATA_DIR to the directory passed as xcodebuild -derivedDataPath (build/DerivedData in the release workflow)." >&2
-  exit 1
-fi
-
-found=0
-missing_required=0
-for root in "${roots[@]}"; do
-  package_swift="$root/SourcePackages/checkouts/swift-crypto/Package.swift"
-  if [ ! -f "$package_swift" ]; then
-    if [ "$explicit" -eq 1 ]; then
-      echo "error: swift-crypto Package.swift not found at $package_swift" >&2
-      missing_required=1
+  for child in "$root"/MacOSCertRev-*; do
+    if [ -d "$child" ]; then
+      return 0
     fi
-    continue
-  fi
-  patch_one "$package_swift"
-  found=$((found + 1))
-done
-
-if [ "$found" -eq 0 ] || [ "$missing_required" -eq 1 ]; then
-  echo "error: the Xcode 27 swift-crypto static-library workaround was not applied." >&2
-  echo "Searched:" >&2
-  for root in "${roots[@]}"; do
-    echo "  $root" >&2
   done
+  return 1
+}
+
+add_project_children() {
+  local root="$1"
+  local child
+  [ -d "$root" ] || return 0
+  shopt -s nullglob
+  for child in "$root"/MacOSCertRev-*; do
+    if [ -d "$child" ]; then
+      add_root "$child"
+    fi
+  done
+}
+
+# A -derivedDataPath directory holds SourcePackages or Build directly.
+# MacOSCertRev-<hash> is the per-project folder inside the default container.
+is_project_root() {
+  local root="${1%/}"
+  local base
+  # The container can contain a stray Build directory. It is still the folder
+  # that holds MacOSCertRev-<hash>, not the directory xcodebuild -derivedDataPath
+  # would use.
+  if is_xcode_container "$root"; then
+    return 1
+  fi
+  base="$(basename "$root")"
+  case "$base" in
+    MacOSCertRev-*) return 0 ;;
+  esac
+  if [ -d "$root/SourcePackages" ] || [ -d "$root/Build" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# Xcode's scheme environment sets DERIVED_DATA_DIR to the container that holds
+# MacOSCertRev-<hash>, including when that container is still empty.
+is_xcode_container() {
+  local root="${1%/}"
+  if [ "$root" = "$HOME/Library/Developer/Xcode/DerivedData" ]; then
+    return 0
+  fi
+  if has_project_children "$root"; then
+    return 0
+  fi
+  return 1
+}
+
+consider_build_setting() {
+  local value="${1:-}"
+  local inferred
+  [ -n "$value" ] || return 0
+  inferred="$(derived_data_from_build_path "$value")" || return 0
+  if is_project_root "$inferred"; then
+    if [ -z "$active_root" ]; then
+      active_root="$inferred"
+    fi
+    add_root "$inferred"
+  else
+    add_project_children "$inferred"
+  fi
+}
+
+collect_roots() {
+  local dd repo_dd
+  roots=()
+  active_root=""
+  strict=0
+  if [ "${FORCE_STATIC_CRYPTO_STRICT:-}" = 1 ]; then
+    strict=1
+    if [ -z "${DERIVED_DATA_DIR:-}" ]; then
+      echo "error: FORCE_STATIC_CRYPTO_STRICT=1 requires DERIVED_DATA_DIR." >&2
+      echo "The release workflow sets it to the xcodebuild -derivedDataPath directory (build/DerivedData)." >&2
+      exit 1
+    fi
+    active_root="${DERIVED_DATA_DIR%/}"
+    add_root "$active_root"
+    return 0
+  fi
+  if [ -n "${DERIVED_DATA_DIR:-}" ]; then
+    dd="${DERIVED_DATA_DIR%/}"
+    if is_xcode_container "$dd"; then
+      add_project_children "$dd"
+    else
+      strict=1
+      active_root="$dd"
+      add_root "$dd"
+      return 0
+    fi
+  fi
+  consider_build_setting "${BUILD_DIR:-}"
+  consider_build_setting "${SYMROOT:-}"
+  consider_build_setting "${OBJROOT:-}"
+  add_project_children "$HOME/Library/Developer/Xcode/DerivedData"
+  repo_dd="$repo_root/build/DerivedData"
+  if [ -f "$(package_swift_for "$repo_dd")" ]; then
+    add_root "$repo_dd"
+  fi
+}
+
+fail_not_applied() {
+  local root
+  echo "error: the Xcode 27 swift-crypto static-library workaround was not applied." >&2
+  if [ "${#roots[@]}" -eq 0 ]; then
+    echo "Searched no project DerivedData directories." >&2
+  else
+    echo "Searched:" >&2
+    for root in "${roots[@]}"; do
+      echo "  $root" >&2
+    done
+  fi
+  if [ "$strict" -eq 1 ]; then
+    echo "This DerivedData path is the release -derivedDataPath directory. A checkout under ~/Library/Developer/Xcode/DerivedData does not satisfy it." >&2
+  elif [ "$resolved_once" -eq 1 ]; then
+    echo "Package dependencies were resolved, and swift-crypto was still not in those directories." >&2
+  fi
   exit 1
+}
+
+apply_patches() {
+  local root package_swift
+  found=0
+  missing_active=0
+  if [ "${#roots[@]}" -eq 0 ]; then
+    return 0
+  fi
+  for root in "${roots[@]}"; do
+    package_swift="$(package_swift_for "$root")"
+    if [ ! -f "$package_swift" ]; then
+      echo "swift-crypto Package.swift not found at $package_swift" >&2
+      if [ "$strict" -eq 1 ] || [ "$root" = "$active_root" ]; then
+        missing_active=1
+      fi
+      continue
+    fi
+    patch_one "$package_swift" || exit 1
+    found=$((found + 1))
+  done
+}
+
+resolve_packages() {
+  local dest="${1:-}"
+  echo "swift-crypto is not checked out yet. Resolving package dependencies, then applying the static-library workaround." >&2
+  if [ -n "$dest" ]; then
+    FORCE_STATIC_CRYPTO_RESOLVING=1 xcodebuild -resolvePackageDependencies \
+      -project "$repo_root/MacOSCertRev.xcodeproj" \
+      -scheme MacOSCertRev \
+      -derivedDataPath "$dest" \
+      -onlyUsePackageVersionsFromResolvedFile
+  else
+    FORCE_STATIC_CRYPTO_RESOLVING=1 xcodebuild -resolvePackageDependencies \
+      -project "$repo_root/MacOSCertRev.xcodeproj" \
+      -scheme MacOSCertRev \
+      -onlyUsePackageVersionsFromResolvedFile
+  fi
+}
+
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+repo_root="$(cd "$script_dir/.." && pwd)"
+roots=()
+active_root=""
+strict=0
+found=0
+missing_active=0
+resolved_once=0
+
+collect_roots
+apply_patches
+
+if [ "$strict" -eq 1 ]; then
+  if [ "$found" -eq 0 ] || [ "$missing_active" -eq 1 ]; then
+    fail_not_applied
+  fi
+elif [ "$found" -eq 0 ] || { [ -n "$active_root" ] && [ ! -f "$(package_swift_for "$active_root")" ]; }; then
+  if ! resolve_packages "$active_root"; then
+    echo "error: resolving package dependencies failed, so the static-library workaround was not applied." >&2
+    exit 1
+  fi
+  resolved_once=1
+  collect_roots
+  apply_patches
+  if [ "$found" -eq 0 ] || [ "$missing_active" -eq 1 ]; then
+    fail_not_applied
+  fi
 fi
 
 echo "swift-crypto static-library workaround is in place (${found} checkout(s))."
