@@ -62,10 +62,9 @@ final class CertificateLoaderTests: XCTestCase {
         let parsed = try FieldDecoder.decode(der: loaded[0], index: 0)
         XCTAssertEqual(parsed.summary.commonName, "leaf.example")
 
-        let lowercase = pem
-            .replacingOccurrences(of: "BEGIN TRUSTED CERTIFICATE", with: "begin trusted certificate")
-            .replacingOccurrences(of: "END TRUSTED CERTIFICATE", with: "end trusted certificate")
-        XCTAssertEqual(try CertificateLoader.load(data: Data(lowercase.utf8), fileName: "trusted.pem"), [der])
+        // The label is case-insensitive. The -----BEGIN / -----END markers are not.
+        let lowercaseLabel = pem.replacingOccurrences(of: "TRUSTED CERTIFICATE", with: "trusted certificate")
+        XCTAssertEqual(try CertificateLoader.load(data: Data(lowercaseLabel.utf8), fileName: "trusted.pem"), [der])
     }
 
     func testTrustedCertificateWithAuxDataLoads() throws {
