@@ -2,7 +2,7 @@
 # Xcode 27 builds swift-crypto's Crypto target as a dynamic framework and then
 # links X509 against a static Crypto.o that was never produced. Declaring the
 # products static makes that object file exist. Checked-out packages are
-# read-only, so this rewrites the local checkout before the build graph loads.
+# read-only, so a required patch rewrites Package.swift and no other file.
 #
 # The edit is in Package.swift, which is shared by every architecture. One
 # patch covers both slices of a universal (arm64 and x86_64) build.
@@ -17,20 +17,16 @@
 #   MacOSCertRev-<hash> under that container. The hash folder is also what
 #   BUILD_DIR / SYMROOT / OBJROOT point at when Xcode has filled them in.
 #
-# On a clean local build the pre-action runs before Xcode checks the packages
-# out. Xcode 27 fails the build when this script exits non-zero, so the
-# pre-action resolves packages once and then patches. The strict release path
-# does not do that: a missing checkout is a failed release.
+# This script never runs xcodebuild. A nested resolve races the outer build:
+# CpResource copies PrivacyInfo.xcprivacy out of the swift-crypto checkout
+# while that checkout is being rewritten. The scheme pre-action therefore
+# patches only a Package.swift that is already on disk, and exits 0 when the
+# checkout does not exist yet. The release job resolves first, then runs this
+# script with FORCE_STATIC_CRYPTO_STRICT=1, which fails if it cannot patch.
 set -euo pipefail
-
-if [ "${FORCE_STATIC_CRYPTO_RESOLVING:-}" = 1 ]; then
-  # xcodebuild -resolvePackageDependencies invokes this pre-action again.
-  exit 0
-fi
 
 patch_one() {
   local package_swift="$1"
-  chmod u+w "$package_swift"
   python3 - "$package_swift" <<'PY'
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
@@ -64,11 +60,16 @@ if missing:
         print(f"  {line}", file=sys.stderr)
     print(f"  in {path}", file=sys.stderr)
     sys.exit(1)
-if applied:
-    path.write_text(text)
-    print(f"patched {path}")
-else:
+if not applied:
     print(f"already static: {path}")
+    sys.exit(0)
+# Only Package.swift changes, and only when the library lines are not already
+# static. Leave every other checkout file, including PrivacyInfo.xcprivacy, alone.
+mode = path.stat().st_mode
+if not (mode & 0o200):
+    path.chmod(mode | 0o200)
+path.write_text(text)
+print(f"patched {path}")
 PY
 }
 
@@ -243,8 +244,6 @@ fail_not_applied() {
   fi
   if [ "$strict" -eq 1 ]; then
     echo "This DerivedData path is the release -derivedDataPath directory. A checkout under ~/Library/Developer/Xcode/DerivedData does not satisfy it." >&2
-  elif [ "$resolved_once" -eq 1 ]; then
-    echo "Package dependencies were resolved, and swift-crypto was still not in those directories." >&2
   fi
   exit 1
 }
@@ -270,23 +269,6 @@ apply_patches() {
   done
 }
 
-resolve_packages() {
-  local dest="${1:-}"
-  echo "swift-crypto is not checked out yet. Resolving package dependencies, then applying the static-library workaround." >&2
-  if [ -n "$dest" ]; then
-    FORCE_STATIC_CRYPTO_RESOLVING=1 xcodebuild -resolvePackageDependencies \
-      -project "$repo_root/MacOSCertRev.xcodeproj" \
-      -scheme MacOSCertRev \
-      -derivedDataPath "$dest" \
-      -onlyUsePackageVersionsFromResolvedFile
-  else
-    FORCE_STATIC_CRYPTO_RESOLVING=1 xcodebuild -resolvePackageDependencies \
-      -project "$repo_root/MacOSCertRev.xcodeproj" \
-      -scheme MacOSCertRev \
-      -onlyUsePackageVersionsFromResolvedFile
-  fi
-}
-
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(cd "$script_dir/.." && pwd)"
 roots=()
@@ -294,7 +276,6 @@ active_root=""
 strict=0
 found=0
 missing_active=0
-resolved_once=0
 
 collect_roots
 apply_patches
@@ -303,17 +284,9 @@ if [ "$strict" -eq 1 ]; then
   if [ "$found" -eq 0 ] || [ "$missing_active" -eq 1 ]; then
     fail_not_applied
   fi
-elif [ "$found" -eq 0 ] || { [ -n "$active_root" ] && [ ! -f "$(package_swift_for "$active_root")" ]; }; then
-  if ! resolve_packages "$active_root"; then
-    echo "error: resolving package dependencies failed, so the static-library workaround was not applied." >&2
-    exit 1
-  fi
-  resolved_once=1
-  collect_roots
-  apply_patches
-  if [ "$found" -eq 0 ] || [ "$missing_active" -eq 1 ]; then
-    fail_not_applied
-  fi
+elif [ "$found" -eq 0 ]; then
+  echo "swift-crypto checkout is not present yet. Leaving the package unchanged."
+  exit 0
 fi
 
 echo "swift-crypto static-library workaround is in place (${found} checkout(s))."
