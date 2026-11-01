@@ -32,6 +32,25 @@ enum CertificateFixtures {
         return "-----BEGIN CERTIFICATE-----\n\(body)\n-----END CERTIFICATE-----\n"
     }
 
+    /// `X509_CERT_AUX` for a single serverAuth trust OID, as written by
+    /// `openssl x509 -trustout -addtrust serverAuth`.
+    static let serverAuthTrustAux = Data([
+        0x30, 0x0C, 0x30, 0x0A, 0x06, 0x08, 0x2B, 0x06, 0x01, 0x05, 0x05, 0x07, 0x03, 0x01,
+    ])
+
+    /// OpenSSL trusted-certificate PEM. `aux` is appended after the certificate DER.
+    static func trustedPEM(_ der: Data, aux: Data = Data()) -> String {
+        var body = der
+        body.append(aux)
+        return trustedPEM(body: body)
+    }
+
+    /// Trusted-certificate PEM whose decoded body is `body` exactly.
+    static func trustedPEM(body: Data) -> String {
+        let encoded = body.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed])
+        return "-----BEGIN TRUSTED CERTIFICATE-----\n\(encoded)\n-----END TRUSTED CERTIFICATE-----\n"
+    }
+
     private static func make(commonName: String, serial: UInt8, extensions: Certificate.Extensions) throws -> Data {
         let privateKey = Certificate.PrivateKey(P256.Signing.PrivateKey())
         let name = try DistinguishedName {
