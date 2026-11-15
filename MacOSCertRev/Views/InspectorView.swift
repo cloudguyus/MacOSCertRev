@@ -41,6 +41,18 @@ struct InspectorView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    if let privateKey = certificate.privateKey {
+                        Text("Private key: \(privateKey.description)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    if certificate.unchained {
+                        Text("Doesn't chain")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .lineLimit(1)
+                    }
                 }
                 .tag(certificate.id)
                 .padding(.vertical, 2)
@@ -67,6 +79,12 @@ struct InspectorView: View {
                     summaryRow("Serial", certificate.summary.serialHex, monospaced: true)
                     summaryRow("Not Before", certificate.summary.notBefore.formatted(date: .abbreviated, time: .standard))
                     summaryRow("Not After", certificate.summary.notAfter.formatted(date: .abbreviated, time: .standard))
+                    if let privateKey = certificate.privateKey {
+                        summaryRow("Private Key", privateKey.description)
+                    }
+                    if certificate.unchained {
+                        summaryRow("Chain", "Doesn't chain to another certificate in this file")
+                    }
                 }
             }
             .padding(.horizontal, 20)

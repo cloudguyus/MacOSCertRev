@@ -33,6 +33,16 @@ struct ContentView: View {
         .onOpenURL { url in
             model.load(url: url)
         }
+        .sheet(isPresented: $model.showsPasswordPrompt, onDismiss: {
+            model.cancelPasswordPrompt()
+        }) {
+            PKCS12PasswordSheet(
+                fileName: model.passwordPromptFileName ?? "PKCS#12",
+                errorMessage: model.passwordPromptError,
+                onOpen: { model.submitPKCS12Password($0) },
+                onCancel: { model.cancelPasswordPrompt() }
+            )
+        }
     }
 
     private var emptyState: some View {
@@ -42,7 +52,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
             Text("Drop a certificate")
                 .font(.title2)
-            Text("PEM or DER (.pem, .cer, .crt, .der). The file stays in memory.")
+            Text("PEM, DER, PKCS#12, or PKCS#7. A PKCS#12 password is requested and then discarded. The file stays in memory.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button("Open…") {
@@ -61,7 +71,7 @@ struct ContentView: View {
             Button("Open", systemImage: "folder") {
                 model.openPanel()
             }
-            .help("Open a certificate")
+            .help("Open a certificate, PKCS#12, or PKCS#7 file")
 
             Button("Copy", systemImage: "doc.on.doc") {
                 if model.showsRaw {

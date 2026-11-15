@@ -4,8 +4,8 @@ import XCTest
 final class CertificateLoaderTests: XCTestCase {
     func testPEMAndDERRoundTrip() throws {
         let der = try CertificateFixtures.leaf()
-        let fromDER = try CertificateLoader.load(data: der, fileName: "leaf.cer")
-        let fromPEM = try CertificateLoader.load(data: Data(CertificateFixtures.pem(der).utf8), fileName: "leaf.pem")
+        let fromDER = try loadedDERs(data: der, fileName: "leaf.cer")
+        let fromPEM = try loadedDERs(data: Data(CertificateFixtures.pem(der).utf8), fileName: "leaf.pem")
 
         XCTAssertEqual(fromDER, [der])
         XCTAssertEqual(fromPEM, [der])
@@ -16,7 +16,7 @@ final class CertificateLoaderTests: XCTestCase {
         XCTAssertTrue(values.contains("DNS: example.com"))
         let pem = PEMEncoding.certificate(from: der)
         XCTAssertEqual(parsed.sections.last?.rows.last?.value, pem)
-        XCTAssertEqual(try CertificateLoader.load(data: Data(pem.utf8), fileName: "encoded.pem"), [der])
+        XCTAssertEqual(try loadedDERs(data: Data(pem.utf8), fileName: "encoded.pem"), [der])
         XCTAssertTrue(values.contains("Digital Signature"))
         XCTAssertTrue(values.contains("leaf.example"))
     }
@@ -25,7 +25,7 @@ final class CertificateLoaderTests: XCTestCase {
         let first = try CertificateFixtures.leaf(commonName: "one.example", serial: 11)
         let second = try CertificateFixtures.leaf(commonName: "two.example", serial: 12)
         let pem = CertificateFixtures.pem(first) + "\n" + CertificateFixtures.pem(second)
-        let ders = try CertificateLoader.load(data: Data(pem.utf8), fileName: "bundle.pem")
+        let ders = try loadedDERs(data: Data(pem.utf8), fileName: "bundle.pem")
 
         XCTAssertEqual(ders.count, 2)
         let parsed = try ders.enumerated().map { try FieldDecoder.decode(der: $1, index: $0) }
@@ -39,7 +39,7 @@ final class CertificateLoaderTests: XCTestCase {
         \(secret)
         -----END PRIVATE KEY-----
         """
-        XCTAssertThrowsError(try CertificateLoader.load(data: Data(pem.utf8), fileName: "key.pem")) { error in
+        XCTAssertThrowsError(try loadedDERs(data: Data(pem.utf8), fileName: "key.pem")) { error in
             XCTAssertEqual(error as? CertificateLoadError, .privateKey)
             XCTAssertFalse((error as? LocalizedError)?.errorDescription?.contains(secret) ?? true)
         }
@@ -48,15 +48,15 @@ final class CertificateLoaderTests: XCTestCase {
     func testPKCS12BlobIsRejected() {
         var data = Data([0x30, 0x10])
         data.append(contentsOf: [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x0C, 0x01])
-        XCTAssertThrowsError(try CertificateLoader.load(data: data, fileName: "bag.der")) { error in
-            XCTAssertEqual(error as? CertificateLoadError, .pkcs12)
+        XCTAssertThrowsError(try loadedDERs(data: data, fileName: "bag.der")) { error in
+            XCTAssertEqual(error as? CertificateLoadError, .pkcs12Corrupt)
         }
     }
 
     func testTrustedCertificateWithoutAuxDataLoads() throws {
         let der = try CertificateFixtures.leaf()
         let pem = CertificateFixtures.trustedPEM(der)
-        let loaded = try CertificateLoader.load(data: Data(pem.utf8), fileName: "trusted.pem")
+        let loaded = try loadedDERs(data: Data(pem.utf8), fileName: "trusted.pem")
 
         XCTAssertEqual(loaded, [der])
         let parsed = try FieldDecoder.decode(der: loaded[0], index: 0)
@@ -64,13 +64,13 @@ final class CertificateLoaderTests: XCTestCase {
 
         // The label is case-insensitive. The -----BEGIN / -----END markers are not.
         let lowercaseLabel = pem.replacingOccurrences(of: "TRUSTED CERTIFICATE", with: "trusted certificate")
-        XCTAssertEqual(try CertificateLoader.load(data: Data(lowercaseLabel.utf8), fileName: "trusted.pem"), [der])
+        XCTAssertEqual(try loadedDERs(data: Data(lowercaseLabel.utf8), fileName: "trusted.pem"), [der])
     }
 
     func testTrustedCertificateWithAuxDataLoads() throws {
         let der = try CertificateFixtures.leaf()
         let pem = CertificateFixtures.trustedPEM(der, aux: CertificateFixtures.serverAuthTrustAux)
-        let loaded = try CertificateLoader.load(data: Data(pem.utf8), fileName: "trusted.pem")
+        let loaded = try loadedDERs(data: Data(pem.utf8), fileName: "trusted.pem")
 
         XCTAssertEqual(loaded, [der])
         let parsed = try FieldDecoder.decode(der: loaded[0], index: 0)
@@ -80,7 +80,7 @@ final class CertificateLoaderTests: XCTestCase {
             der,
             aux: CertificateFixtures.serverAuthTrustAux + Data([0xFF, 0x00, 0x99])
         )
-        XCTAssertEqual(try CertificateLoader.load(data: Data(withJunk.utf8), fileName: "trusted.pem"), [der])
+        XCTAssertEqual(try loadedDERs(data: Data(withJunk.utf8), fileName: "trusted.pem"), [der])
     }
 
     func testMixedCertificateAndTrustedBlocksKeepOrder() throws {
@@ -90,7 +90,7 @@ final class CertificateLoaderTests: XCTestCase {
         let pem = CertificateFixtures.trustedPEM(first)
             + CertificateFixtures.pem(second)
             + CertificateFixtures.trustedPEM(third, aux: CertificateFixtures.serverAuthTrustAux)
-        let ders = try CertificateLoader.load(data: Data(pem.utf8), fileName: "bundle.pem")
+        let ders = try loadedDERs(data: Data(pem.utf8), fileName: "bundle.pem")
 
         XCTAssertEqual(ders, [first, second, third])
         let names = try ders.enumerated().map { try FieldDecoder.decode(der: $1, index: $0).summary.commonName }
@@ -111,14 +111,14 @@ final class CertificateLoaderTests: XCTestCase {
         ]
         for body in bodies {
             let pem = CertificateFixtures.trustedPEM(body: body)
-            XCTAssertThrowsError(try CertificateLoader.load(data: Data(pem.utf8), fileName: "trusted.pem")) { error in
+            XCTAssertThrowsError(try loadedDERs(data: Data(pem.utf8), fileName: "trusted.pem")) { error in
                 XCTAssertEqual(error as? CertificateLoadError, .notACertificate(fileName: "trusted.pem"))
             }
         }
 
         var truncated = Data([0xE9, 0x0A])
         truncated.append(contentsOf: Data("-----BEGIN TRUSTED CERTIFICATE-----\nAAAA\n".utf8))
-        XCTAssertThrowsError(try CertificateLoader.load(data: truncated, fileName: "trusted.pem")) { error in
+        XCTAssertThrowsError(try loadedDERs(data: truncated, fileName: "trusted.pem")) { error in
             XCTAssertEqual(error as? CertificateLoadError, .notACertificate(fileName: "trusted.pem"))
         }
     }
@@ -128,11 +128,11 @@ final class CertificateLoaderTests: XCTestCase {
         var extra = der
         extra.append(CertificateFixtures.serverAuthTrustAux)
 
-        XCTAssertThrowsError(try CertificateLoader.load(data: extra, fileName: "leaf.cer")) { error in
+        XCTAssertThrowsError(try loadedDERs(data: extra, fileName: "leaf.cer")) { error in
             XCTAssertEqual(error as? CertificateLoadError, .notACertificate(fileName: "leaf.cer"))
         }
         let pem = CertificateFixtures.pem(extra)
-        XCTAssertThrowsError(try CertificateLoader.load(data: Data(pem.utf8), fileName: "leaf.pem")) { error in
+        XCTAssertThrowsError(try loadedDERs(data: Data(pem.utf8), fileName: "leaf.pem")) { error in
             XCTAssertEqual(error as? CertificateLoadError, .notACertificate(fileName: "leaf.pem"))
         }
     }
@@ -146,7 +146,7 @@ final class CertificateLoaderTests: XCTestCase {
         data.append(0xE9)
         XCTAssertNil(String(data: data, encoding: .utf8))
 
-        let loaded = try CertificateLoader.load(data: data, fileName: "latin1.pem")
+        let loaded = try loadedDERs(data: data, fileName: "latin1.pem")
         XCTAssertEqual(loaded, [der])
         let parsed = try FieldDecoder.decode(der: loaded[0], index: 0)
         XCTAssertEqual(parsed.summary.commonName, "leaf.example")
@@ -161,7 +161,7 @@ final class CertificateLoaderTests: XCTestCase {
         data.append(contentsOf: Data(CertificateFixtures.pem(second).utf8))
         XCTAssertNil(String(data: data, encoding: .utf8))
 
-        let ders = try CertificateLoader.load(data: data, fileName: "bundle.pem")
+        let ders = try loadedDERs(data: data, fileName: "bundle.pem")
         XCTAssertEqual(ders, [first, second])
         let names = try ders.enumerated().map { try FieldDecoder.decode(der: $1, index: $0).summary.commonName }
         XCTAssertEqual(names, ["one.example", "two.example"])
@@ -172,7 +172,7 @@ final class CertificateLoaderTests: XCTestCase {
         let text = "Subject: Café\n" + CertificateFixtures.pem(der)
         let data = Data(text.utf8)
         XCTAssertNotNil(String(data: data, encoding: .utf8))
-        XCTAssertEqual(try CertificateLoader.load(data: data, fileName: "utf8.pem"), [der])
+        XCTAssertEqual(try loadedDERs(data: data, fileName: "utf8.pem"), [der])
     }
 
     func testDERContainingHyphenRunLoadsAsDER() throws {
@@ -180,8 +180,8 @@ final class CertificateLoaderTests: XCTestCase {
         XCTAssertNotNil(der.range(of: Data("-----".utf8)))
         XCTAssertNil(der.range(of: Data("-----BEGIN ".utf8)))
 
-        XCTAssertEqual(try CertificateLoader.load(data: der, fileName: "odd.cer"), [der])
-        XCTAssertEqual(try CertificateLoader.load(data: der, fileName: "odd.pem"), [der])
+        XCTAssertEqual(try loadedDERs(data: der, fileName: "odd.cer"), [der])
+        XCTAssertEqual(try loadedDERs(data: der, fileName: "odd.pem"), [der])
         let parsed = try FieldDecoder.decode(der: der, index: 0)
         XCTAssertEqual(parsed.summary.commonName, "leaf-----example")
     }
@@ -195,9 +195,13 @@ final class CertificateLoaderTests: XCTestCase {
         -----END PRIVATE KEY-----
         """.utf8))
         XCTAssertNil(String(data: data, encoding: .utf8))
-        XCTAssertThrowsError(try CertificateLoader.load(data: data, fileName: "key.pem")) { error in
+        XCTAssertThrowsError(try loadedDERs(data: data, fileName: "key.pem")) { error in
             XCTAssertEqual(error as? CertificateLoadError, .privateKey)
             XCTAssertFalse((error as? LocalizedError)?.errorDescription?.contains(secret) ?? true)
         }
+    }
+
+    private func loadedDERs(data: Data, fileName: String) throws -> [Data] {
+        try CertificateLoader.load(data: data, fileName: fileName).map(\.der)
     }
 }

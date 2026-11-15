@@ -1,12 +1,14 @@
 # CertRev
 
-CertRev is a Mac app for reading an X.509 certificate. Open a `.cer`, `.crt`, `.der`, or `.pem` file and review the certificate without importing it into Keychain and without OpenSSL.
+CertRev is a Mac app for reading an X.509 certificate. Open a `.cer`, `.crt`, `.der`, `.pem`, PKCS#12 (`.p12`, `.pfx`), or PKCS#7 (`.p7b`, `.p7c`) file and review the certificate without importing it into Keychain and without OpenSSL.
 
 The official build is the one published from [github.com/cloudguyus/MacOSCertRev](https://github.com/cloudguyus/MacOSCertRev).
 
 ## What you can do
 
 - Drop a certificate on the window, or use Open. macOS can also open a certificate file with CertRev.
+- PKCS#12 (`.p12`, `.pfx`) opens after a password prompt. Every certificate in the bundle is listed, leaf first. When a private key is present, CertRev shows its type and size only. The password and the key bytes are discarded after import and are not added to Keychain.
+- PKCS#7 (`.p7b`, `.p7c`) opens a certs-only bundle in DER or PEM (`-----BEGIN PKCS7-----`). Certificates are ordered leaf to root when they chain, and a certificate that does not chain is marked.
 - The header shows the subject, issuer, serial number, and the not-before and not-after dates, with a trust badge beside the name.
 - **System view** is the default. It is the macOS certificate panel for the selected certificate. Trust settings in that panel cannot be edited.
 - **View Text** shows the selected certificate as `-----BEGIN CERTIFICATE-----` … `-----END CERTIFICATE-----` text. You can select it.
@@ -19,9 +21,13 @@ The official build is the one published from [github.com/cloudguyus/MacOSCertRev
 ## What it refuses
 
 - A PEM file that contains a private key. The key bytes are not shown.
-- PKCS#12 (`.pfx`, `.p12`), PKCS#7 (`.p7b`, `.p7c`), and CRLs. Those are not supported yet.
+- A PKCS#7 file that is a signature or enveloped data, rather than a certificate bundle.
+- Certificate revocation lists. Those are not supported yet.
+- A PKCS#12 file whose encryption is legacy RC2 or 3DES, when this version of macOS cannot decrypt it. The error says so. The password is not reported as wrong when the cipher is the problem.
 
 CertRev keeps the certificate in memory. It does not add it to a keychain.
+
+How to regenerate the test bundles and check them on a Mac is in [docs/TESTING-PKCS.md](docs/TESTING-PKCS.md).
 
 ## Requirements
 

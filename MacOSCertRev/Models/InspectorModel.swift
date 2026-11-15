@@ -14,6 +14,10 @@ final class InspectorModel {
     private(set) var fileName: String?
     private(set) var trust: TrustReport?
     var errorMessage: String?
+    /// Shown while a PKCS#12 password is being requested. The password itself is not stored.
+    var showsPasswordPrompt = false
+    var passwordPromptFileName: String?
+    var passwordPromptError: String?
     /// On shows CertRev's field list. Off shows the system view, unless certificate text is on.
     var showsRaw = false
     /// On shows the same `-----BEGIN CERTIFICATE-----` text that Copy Certificate copies.
@@ -25,6 +29,13 @@ final class InspectorModel {
     private var trustGeneration = 0
     private var trustEvaluationTask: Task<Void, Never>?
     private let evaluateTrust: @Sendable ([Data], Int, TrustEvaluationOptions) async -> TrustReport
+    /// The PKCS#12 bytes waiting on a password. Cleared when the prompt closes.
+    private var pendingPKCS12: PendingPKCS12?
+
+    private struct PendingPKCS12 {
+        var data: Data
+        var fileName: String
+    }
 
     /// Tests pass a stand-in so a trust result can finish after a later open has already failed.
     init(
@@ -49,9 +60,8 @@ final class InspectorModel {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.allowsOtherFileTypes = true
-        panel.message = "Choose a PEM or DER certificate."
-        let types = ["cer", "crt", "der", "pem"].compactMap { UTType(filenameExtension: $0) }
-        panel.allowedContentTypes = types.isEmpty ? [.data] : types
+        panel.message = "Choose a PEM, DER, PKCS#12, or PKCS#7 file."
+        panel.allowedContentTypes = Self.openPanelTypes()
         guard panel.runModal() == .OK, let url = panel.url else { return }
         load(url: url)
     }
@@ -63,30 +73,97 @@ final class InspectorModel {
                 url.stopAccessingSecurityScopedResource()
             }
         }
+        let data: Data
         do {
-            let data = try Data(contentsOf: url)
-            let ders = try CertificateLoader.load(data: data, fileName: url.lastPathComponent)
-            let parsed = try ders.enumerated().map { index, der in
-                try FieldDecoder.decode(der: der, index: index)
+            data = try Data(contentsOf: url)
+        } catch {
+            fail(error)
+            return
+        }
+        let name = url.lastPathComponent
+        if CertificateLoader.needsPassword(data: data, fileName: name) {
+            pendingPKCS12 = PendingPKCS12(data: data, fileName: name)
+            passwordPromptFileName = name
+            passwordPromptError = nil
+            showsPasswordPrompt = true
+            return
+        }
+        dismissPasswordPrompt()
+        ingest(data: data, fileName: name, password: nil, retryWrongPassword: false)
+    }
+
+    /// Imports the PKCS#12 that the password sheet is asking about.
+    /// The password is not stored on the model. A wrong password leaves the sheet open.
+    func submitPKCS12Password(_ password: String) {
+        guard let pending = pendingPKCS12 else { return }
+        ingest(data: pending.data, fileName: pending.fileName, password: password, retryWrongPassword: true)
+    }
+
+    func cancelPasswordPrompt() {
+        dismissPasswordPrompt()
+    }
+
+    private func ingest(data: Data, fileName name: String, password: String?, retryWrongPassword: Bool) {
+        do {
+            let loaded = try CertificateLoader.load(data: data, fileName: name, password: password)
+            let parsed = try loaded.enumerated().map { index, item in
+                FieldDecoder.annotate(
+                    try FieldDecoder.decode(der: item.der, index: index),
+                    privateKey: item.privateKey,
+                    unchained: item.unchained
+                )
             }
-            fileName = url.lastPathComponent
+            dismissPasswordPrompt()
+            fileName = name
             certificates = parsed
             selectedID = parsed.first?.id
             selectedFieldID = parsed.first?.sections.first?.rows.first?.id
             errorMessage = nil
             trust = nil
             scheduleTrustEvaluation()
+        } catch let error as CertificateLoadError where error == .pkcs12WrongPassword && retryWrongPassword {
+            passwordPromptError = error.localizedDescription
         } catch {
-            // Drop the certificate already on screen, and retire the evaluation in
-            // flight so it cannot put that certificate's trust result back.
-            trustGeneration += 1
-            certificates = []
-            fileName = nil
-            selectedID = nil
-            selectedFieldID = nil
-            trust = nil
-            errorMessage = error.localizedDescription
+            fail(error)
         }
+    }
+
+    private func dismissPasswordPrompt() {
+        pendingPKCS12 = nil
+        passwordPromptFileName = nil
+        passwordPromptError = nil
+        showsPasswordPrompt = false
+    }
+
+    private func fail(_ error: Error) {
+        dismissPasswordPrompt()
+        // Drop the certificate already on screen, and retire the evaluation in
+        // flight so it cannot put that certificate's trust result back.
+        trustGeneration += 1
+        certificates = []
+        fileName = nil
+        selectedID = nil
+        selectedFieldID = nil
+        trust = nil
+        errorMessage = error.localizedDescription
+    }
+
+    private static func openPanelTypes() -> [UTType] {
+        let identifiers = [
+            "com.cloudguyus.x509-certificate",
+            "com.cloudguyus.pem-certificate",
+            "com.rsa.pkcs-12",
+            "com.rsa.pkcs-7",
+        ]
+        let extensions = ["cer", "crt", "der", "pem", "p12", "pfx", "p7b", "p7c"]
+        var seen = Set<String>()
+        var types: [UTType] = []
+        for type in identifiers.compactMap({ UTType($0) }) + extensions.compactMap({ UTType(filenameExtension: $0) }) {
+            if seen.insert(type.identifier).inserted {
+                types.append(type)
+            }
+        }
+        return types.isEmpty ? [.data] : types
     }
 
     func selectCertificate(_ id: Int?) {

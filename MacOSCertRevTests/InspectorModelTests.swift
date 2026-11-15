@@ -27,7 +27,7 @@ final class InspectorModelTests: XCTestCase {
 
         model.load(url: fixture.pkcs12URL)
 
-        assertFailedOpen(model, error: .pkcs12)
+        assertFailedOpen(model, error: .pkcs12Corrupt)
 
         model.load(url: fixture.certificateURL)
         await model.waitForTrustEvaluation()
