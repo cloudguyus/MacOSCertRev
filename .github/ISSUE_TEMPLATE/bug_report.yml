@@ -1,0 +1,113 @@
+name: Bug report
+description: Report a problem with CertRev on macOS.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Do not include sensitive material
+
+        **Do not attach private keys, `.p12` files, passwords, or certificates containing sensitive information.** Redact subject names and serial numbers if needed.
+
+  - type: input
+    id: version
+    attributes:
+      label: CertRev version
+      description: Shown in the About window, or as CFBundleShortVersionString in Info.plist. For example, 1.0.1.
+      placeholder: "1.0.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      description: Homebrew cask is `brew install --cask cloudguyus/tap/certrev`. The GitHub Release is the `CertRev-<version>.zip` download.
+      options:
+        - Homebrew cask
+        - GitHub Release zip
+        - built from source
+        - other
+    validations:
+      required: false
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: From the Apple menu, About This Mac. For example, 15.1.
+      placeholder: "15.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: Mac architecture
+      description: Apple silicon or Intel. About This Mac shows this as Chip or Processor.
+      options:
+        - Apple silicon
+        - Intel
+    validations:
+      required: false
+
+  - type: dropdown
+    id: certificate-type
+    attributes:
+      label: Certificate file type
+      description: The file or item involved. Choose "other / not file-related" when the problem is not about a specific certificate.
+      options:
+        - "PEM .pem/.crt"
+        - "DER .cer/.der"
+        - "PKCS#12 .p12/.pfx"
+        - "PKCS#7 .p7b/.p7c"
+        - Keychain item
+        - other / not file-related
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What CertRev did, including any error text shown in the app. Leave out private keys, passwords, and sensitive certificate contents.
+      placeholder: CertRev showed an error when I opened the file.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What you expected CertRev to do instead.
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Steps from a fresh launch through the failure. Do not paste sensitive certificate contents.
+      placeholder: |
+        1. Open CertRev
+        2. Open the certificate file
+        3. See the error
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or crash report
+      description: Paste a relevant Console log or crash excerpt. This is shown as a code block. Remove private keys, passwords, and sensitive certificate data first.
+      render: shell
+    validations:
+      required: false
+
+  - type: upload
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: Optional. Images of the problem only. Do not upload private keys, .p12 files, passwords, or certificates containing sensitive information.
+    validations:
+      required: false
