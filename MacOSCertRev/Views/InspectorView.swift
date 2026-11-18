@@ -1,4 +1,3 @@
-import Security
 import SwiftUI
 
 struct InspectorView: View {
@@ -10,25 +9,36 @@ struct InspectorView: View {
                 if model.certificates.count > 1 {
                     certificateList
                         .frame(minWidth: 200, idealWidth: 240, maxWidth: 320)
-                        .frame(height: proxy.size.height)
+                        .frame(maxHeight: .infinity)
                 }
-                VStack(spacing: 0) {
-                    summary
-                    Divider()
-                    detail
-                        // A zero minimum stops the system certificate view's tall
-                        // fitting size from pushing the summary out of the window.
-                        .frame(minHeight: 0, maxHeight: .infinity)
-                        .frame(maxWidth: .infinity)
-                        .clipped()
-                    Divider()
-                    PathView(report: model.trust)
-                        .frame(height: 148)
-                }
-                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+                inspectorColumn
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .layoutPriority(1)
             }
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
+    }
+
+    /// The header keeps its own height. The certificate panel only gets the space
+    /// below it, so a long subject or the sidebar cannot pull the panel up over the header.
+    private var inspectorColumn: some View {
+        VStack(spacing: 0) {
+            summary
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .zIndex(1)
+            Divider()
+            detail
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .layoutPriority(1)
+                .clipped()
+            Divider()
+            PathView(report: model.trust)
+                .frame(height: 148)
+                .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var certificateList: some View {
@@ -167,7 +177,7 @@ struct InspectorView: View {
                 .font(monospaced ? .body.monospaced() : .body)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -201,17 +211,21 @@ struct InspectorView: View {
                     .padding(20)
             }
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-        } else if let certificate = securityCertificate {
-            SystemCertificateView(certificate: certificate)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let chain = systemChain {
+            SystemCertificateView(chain: chain, networkFetchAllowed: model.fetchIntermediates)
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         } else {
             FieldPane(model: model)
         }
     }
 
-    private var securityCertificate: SecCertificate? {
-        guard let der = model.selectedCertificate?.der else { return nil }
-        return SecCertificateCreateWithData(nil, der as CFData)
+    private var systemChain: [Data]? {
+        guard !model.certificates.isEmpty,
+              let selectedID = model.selectedID,
+              let leafIndex = model.certificates.firstIndex(where: { $0.id == selectedID })
+        else { return nil }
+        let ordered = TrustEvaluator.orderedCertificateDERs(model.certificates.map(\.der), leafIndex: leafIndex)
+        return ordered.isEmpty ? nil : ordered
     }
 
     private var certificateText: String? {
