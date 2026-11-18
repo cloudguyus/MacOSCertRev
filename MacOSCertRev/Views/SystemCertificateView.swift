@@ -3,9 +3,7 @@ import SecurityInterface
 import SwiftUI
 
 struct SystemCertificateView: NSViewRepresentable {
-    /// Leaf first, then the other certificates from the same file.
-    var chain: [Data]
-    var networkFetchAllowed: Bool
+    var der: Data
 
     func makeNSView(context: Context) -> CertificateScrollView {
         let scroll = CertificateScrollView()
@@ -14,7 +12,7 @@ struct SystemCertificateView: NSViewRepresentable {
     }
 
     func updateNSView(_ scroll: CertificateScrollView, context: Context) {
-        guard scroll.configuredChain != chain || scroll.configuredNetworkFetch != networkFetchAllowed else { return }
+        guard scroll.configuredDER != der else { return }
         configure(scroll)
         scroll.invalidateMeasurement()
         scroll.layoutSubtreeIfNeeded()
@@ -32,44 +30,23 @@ struct SystemCertificateView: NSViewRepresentable {
     }
 
     private func configure(_ scroll: CertificateScrollView) {
+        guard let certificate = SecCertificateCreateWithData(nil, der as CFData) else { return }
         let view = scroll.certificateView
-        guard let leafDER = chain.first, let leaf = SecCertificateCreateWithData(nil, leafDER as CFData) else { return }
-        let policy = SecPolicyCreateBasicX509()
-        view.setPolicies(policy)
-        view.setCertificate(leaf)
+        view.setPolicies(SecPolicyCreateBasicX509())
+        view.setCertificate(certificate)
         view.setDisplayDetails(true)
         view.setDetailsDisclosed(true)
-        view.setDisplayTrust(true)
+        // SFCertificateView's public API is setCertificate(_:) plus policies and
+        // display flags. It evaluates trust for that one certificate. There is no
+        // public method that accepts a SecTrust or the other certificates in a
+        // bundle. SFCertificateTrustPanel and SFCertificatePanel do take a trust
+        // or a certificate list, but they are sheets, not this embedded panel.
+        // Hiding the panel's trust line leaves the badge and Certification Path,
+        // which share one evaluation, as the only trust indicators.
+        view.setDisplayTrust(false)
         // Trust editing writes the user's trust settings. This app only inspects.
         view.setEditableTrust(false)
-        // setCertificate builds a trust from the leaf alone. Replace it with the
-        // same chain and basic policy the badge uses, so the two results agree.
-        if chain.count > 1 {
-            let index = chain.firstIndex(of: leafDER) ?? 0
-            let trust = TrustEvaluator.makeTrust(
-                ders: chain,
-                leafIndex: index,
-                options: TrustEvaluationOptions(
-                    networkFetchAllowed: networkFetchAllowed,
-                    anchorDERs: nil
-                )
-            )
-            if let trust {
-                scroll.displayedTrust = trust
-                _ = SecTrustEvaluateWithError(trust, nil)
-                apply(trust, to: view)
-            }
-        }
-        scroll.configuredChain = chain
-        scroll.configuredNetworkFetch = networkFetchAllowed
-    }
-
-    /// `SFCertificateView` has no public chain setter. `setTrust:` is what the
-    /// panel uses internally to display a trust result for more than one certificate.
-    private func apply(_ trust: SecTrust, to view: SFCertificateView) {
-        let selectors = ["setTrust:", "_setTrust:"].map(NSSelectorFromString.init)
-        guard let selector = selectors.first(where: { view.responds(to: $0) }) else { return }
-        view.perform(selector, with: trust)
+        scroll.configuredDER = der
     }
 }
 
@@ -77,10 +54,7 @@ struct SystemCertificateView: NSViewRepresentable {
 /// inspector grow past the window. A scroll view keeps the header and path in place.
 final class CertificateScrollView: NSScrollView {
     let certificateView = SFCertificateView()
-    var configuredChain: [Data] = []
-    var configuredNetworkFetch = false
-    /// Keeps the trust object alive after it is handed to the certificate panel.
-    var displayedTrust: SecTrust?
+    var configuredDER: Data?
     private var resizing = false
     private var measuredWidth: CGFloat = 0
     private var measuredHeight: CGFloat = 0

@@ -211,21 +211,12 @@ struct InspectorView: View {
                     .padding(20)
             }
             .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-        } else if let chain = systemChain {
-            SystemCertificateView(chain: chain, networkFetchAllowed: model.fetchIntermediates)
+        } else if let der = model.selectedCertificate?.der {
+            SystemCertificateView(der: der)
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         } else {
             FieldPane(model: model)
         }
-    }
-
-    private var systemChain: [Data]? {
-        guard !model.certificates.isEmpty,
-              let selectedID = model.selectedID,
-              let leafIndex = model.certificates.firstIndex(where: { $0.id == selectedID })
-        else { return nil }
-        let ordered = TrustEvaluator.orderedCertificateDERs(model.certificates.map(\.der), leafIndex: leafIndex)
-        return ordered.isEmpty ? nil : ordered
     }
 
     private var certificateText: String? {

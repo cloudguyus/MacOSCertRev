@@ -26,8 +26,9 @@ enum TrustEvaluator {
         return ordered
     }
 
-    /// The trust object behind the badge. The system certificate panel uses this
-    /// same object so the two indicators see the same chain and policy.
+    /// The trust object behind the badge and the certification path.
+    /// `SFCertificateView` cannot be given this object: its public API takes one
+    /// certificate and builds trust from that certificate alone.
     static func makeTrust(
         ders: [Data],
         leafIndex: Int,
