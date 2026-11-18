@@ -86,7 +86,7 @@ enum PKCS12Reader {
 
         for element in array {
             guard let item = element as? NSDictionary else { continue }
-            if let identity = item.object(forKey: kSecImportItemIdentity) as? SecIdentity {
+            if let identity = secIdentity(item.object(forKey: kSecImportItemIdentity)) {
                 let summary = privateKeySummary(identity)
                 var certificate: SecCertificate?
                 if SecIdentityCopyCertificate(identity, &certificate) == errSecSuccess, let certificate {
@@ -95,7 +95,7 @@ enum PKCS12Reader {
             }
             if let chain = item.object(forKey: kSecImportItemCertChain) as? NSArray {
                 for element in chain {
-                    guard let certificate = element as? SecCertificate else { continue }
+                    guard let certificate = secCertificate(element) else { continue }
                     appendCertificate(certificate, key: nil)
                 }
             }
@@ -111,6 +111,22 @@ enum PKCS12Reader {
         return ordered.map { item in
             LoadedCertificate(der: item.der, unchained: item.unchained, privateKey: keys[item.der])
         }
+    }
+
+    /// `as? SecIdentity` is a compile error: Swift treats a conditional downcast to a
+    /// CoreFoundation type as one that always succeeds. Compare type IDs, then force-cast.
+    private static func secIdentity(_ value: Any?) -> SecIdentity? {
+        guard let value else { return nil }
+        let object = value as AnyObject
+        guard CFGetTypeID(object) == SecIdentityGetTypeID() else { return nil }
+        return object as! SecIdentity
+    }
+
+    private static func secCertificate(_ value: Any?) -> SecCertificate? {
+        guard let value else { return nil }
+        let object = value as AnyObject
+        guard CFGetTypeID(object) == SecCertificateGetTypeID() else { return nil }
+        return object as! SecCertificate
     }
 
     /// Reads type and size. `SecKeyCopyExternalRepresentation` is intentionally not called.
