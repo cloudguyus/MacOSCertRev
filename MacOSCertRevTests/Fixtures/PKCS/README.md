@@ -13,12 +13,24 @@ scripts/make-test-fixtures.sh
 The script uses whichever `openssl` is on `PATH`. LibreSSL (the `/usr/bin/openssl`
 shipped with macOS) and Homebrew OpenSSL 3 are both supported. OpenSSL 3 writes
 the RC2/3DES file with `-legacy`. LibreSSL still writes that older encryption by
-default and does not accept `-legacy`.
+default and does not accept `-legacy`. Rewriting the blank-password MAC also
+needs `python3`.
 
 ## Password
 
-`test123` for every PKCS#12 file except `leaf-empty-password.p12`, which has an
-empty password. Open that file by leaving the password field blank.
+`test123` for every PKCS#12 file except the two blank-password files. Open those
+by leaving the password field blank.
+
+`leaf-empty-password.p12` is the OpenSSL 3 AES export with its MAC replaced by
+the zero-length password form. That is the blank passphrase `SecPKCS12Import`
+uses, and the AES encryption already uses that same empty password. This is the
+file the app is expected to open.
+
+`leaf-empty-password-openssl3.p12` is the same export before that rewrite.
+OpenSSL writes two null bytes into the MAC and a zero-length password into the
+AES encryption. A blank passphrase on macOS does not match that MAC, so CertRev
+reports a blank-password encoding it cannot import instead of calling the file
+corrupt.
 
 ## Files
 
@@ -28,7 +40,8 @@ empty password. Open that file by leaving the password field blank.
 | `unrelated.crt` | A self-signed certificate that does not chain to the others. |
 | `TEST-ONLY-*.key.pem` | Throwaway PKCS#8 private keys for those certificates. |
 | `leaf-aes256.p12` | Leaf certificate and its private key. AES-256, password `test123`. |
-| `leaf-empty-password.p12` | Same leaf. AES-256, empty password. |
+| `leaf-empty-password.p12` | Same leaf. AES-256, blank password, MAC rewritten to the zero-length form macOS imports. |
+| `leaf-empty-password-openssl3.p12` | Same leaf before that rewrite. OpenSSL's split blank-password encoding. |
 | `leaf-legacy-rc2-3des.p12` | Same leaf. Legacy RC2 (certificates) and 3DES (private key), password `test123`. |
 | `chain-aes256.p12` | Leaf, intermediate, and root, plus the leaf private key. AES-256, password `test123`. |
 | `chain-aes256.pfx` | A copy of `chain-aes256.p12`. |

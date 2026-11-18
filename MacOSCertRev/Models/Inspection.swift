@@ -86,6 +86,7 @@ enum CertificateLoadError: Error, Equatable, LocalizedError {
     case pkcs12PasswordRequired
     case pkcs12WrongPassword
     case pkcs12LegacyEncryption
+    case pkcs12BlankPasswordEncoding
     case pkcs12Corrupt
     case pkcs7NotACertificateBundle
     case pkcs7Corrupt
@@ -104,6 +105,8 @@ enum CertificateLoadError: Error, Equatable, LocalizedError {
             return "The password is incorrect."
         case .pkcs12LegacyEncryption:
             return "This PKCS#12 file uses legacy RC2 or 3DES encryption, which this version of macOS cannot open. Export it again with AES-256."
+        case .pkcs12BlankPasswordEncoding:
+            return "This PKCS#12 file uses a blank-password encoding that this version of macOS cannot import. Export it again and set a password."
         case .pkcs12Corrupt:
             return "This PKCS#12 file is corrupt or is not a PKCS#12 bundle."
         case .pkcs7NotACertificateBundle:

@@ -34,37 +34,54 @@ enum PKCS12Reader {
     }
 
     static func importBundle(_ data: Data, password: String) throws -> [LoadedCertificate] {
-        var passwordBytes = pkcs12PasswordBytes(password)
-        defer { wipe(&passwordBytes) }
-
-        let mac = macStatus(data, password: passwordBytes)
-        if mac == .didNotMatch {
+        let verdict = macVerdict(data, password: password)
+        if verdict == .wrongPassword {
             throw CertificateLoadError.pkcs12WrongPassword
         }
 
-        let verified = mac == .matched
-        let (status, items) = securityImport(data, password: password)
-        guard status == errSecSuccess, let items else {
-            if isAuthenticationFailure(status), !verified {
-                throw CertificateLoadError.pkcs12WrongPassword
-            }
-            if usesLegacyEncryption(data) {
-                throw CertificateLoadError.pkcs12LegacyEncryption
-            }
-            throw CertificateLoadError.pkcs12Corrupt
+        // A blank passphrase is two different passwords in PKCS#12: no password
+        // (zero bytes) and an empty BMPString (two null bytes). SecPKCS12Import
+        // only accepts a CFString, so try the empty string and a missing passphrase.
+        // Both stay out of the keychain.
+        let imports: [(OSStatus, CFArray?)]
+        if password.isEmpty {
+            imports = [
+                securityImport(data, password: ""),
+                securityImport(data, password: nil),
+            ]
+        } else {
+            imports = [securityImport(data, password: password)]
         }
-        return try certificates(from: items)
+        if let opened = imports.first(where: { $0.0 == errSecSuccess }), let items = opened.1 {
+            return try certificates(from: items)
+        }
+
+        let status = imports[0].0
+        let verified = verdict == .matched
+        if password.isEmpty, verified {
+            throw CertificateLoadError.pkcs12BlankPasswordEncoding
+        }
+        if isAuthenticationFailure(status), !verified {
+            throw CertificateLoadError.pkcs12WrongPassword
+        }
+        if usesLegacyEncryption(data) {
+            throw CertificateLoadError.pkcs12LegacyEncryption
+        }
+        throw CertificateLoadError.pkcs12Corrupt
     }
 
     /// `SecPKCS12Import` keeps the key in memory when `kSecImportToMemoryOnly` is set.
     /// The password exists only for this call. Nothing is added to the keychain.
-    private static func securityImport(_ data: Data, password: String) -> (OSStatus, CFArray?) {
-        let options = [
-            kSecImportExportPassphrase as String: password,
+    /// Pass `nil` to omit `kSecImportExportPassphrase`.
+    private static func securityImport(_ data: Data, password: String?) -> (OSStatus, CFArray?) {
+        var options: [String: Any] = [
             kSecImportToMemoryOnly as String: kCFBooleanTrue as Any,
-        ] as CFDictionary
+        ]
+        if let password {
+            options[kSecImportExportPassphrase as String] = password
+        }
         var items: CFArray?
-        let status = SecPKCS12Import(data as CFData, options, &items)
+        let status = SecPKCS12Import(data as CFData, options as CFDictionary, &items)
         return (status, items)
     }
 
@@ -198,6 +215,45 @@ enum PKCS12Reader {
                 return nil
             }
         }
+    }
+
+    private enum MACVerdict: Equatable {
+        case absent
+        case unchecked
+        case matched
+        case wrongPassword
+    }
+
+    /// A blank password is checked as both an empty BMPString (two null bytes) and
+    /// as no password (zero bytes). OpenSSL 3 writes the first into the MAC and
+    /// uses the second for PBES2. Apple checks a blank passphrase as the second.
+    private static func macVerdict(_ data: Data, password: String) -> MACVerdict {
+        var encodings = [pkcs12PasswordBytes(password)]
+        if password.isEmpty {
+            encodings.append([])
+        }
+        defer {
+            for index in encodings.indices {
+                wipe(&encodings[index])
+            }
+        }
+        var sawUnchecked = false
+        var sawAbsent = false
+        for encoding in encodings {
+            switch macStatus(data, password: encoding) {
+            case .matched:
+                return .matched
+            case .didNotMatch:
+                break
+            case .unchecked:
+                sawUnchecked = true
+            case .absent:
+                sawAbsent = true
+            }
+        }
+        if sawUnchecked { return .unchecked }
+        if sawAbsent { return .absent }
+        return .wrongPassword
     }
 
     /// Checks the PKCS#12 MAC (RFC 7292) so a wrong password is distinct from a

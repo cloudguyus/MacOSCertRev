@@ -12,7 +12,7 @@ scripts/make-test-fixtures.sh
 
 macOS `/usr/bin/openssl` is LibreSSL. Homebrew OpenSSL 3 is also fine. The script detects which one it is. OpenSSL 3 writes the legacy fixture with `-legacy` (RC2 for certificates, 3DES for the private key). LibreSSL still writes that older encryption by default and does not accept `-legacy`.
 
-The PKCS#12 password is `test123`, except `leaf-empty-password.p12`, which has an empty password. Regenerating replaces the files. The unit tests read the committed copies, so commit the new files if you regenerate them.
+The PKCS#12 password is `test123`, except the blank-password files. Regenerating replaces the files and needs `python3` as well as `openssl`, because the script rewrites one blank-password MAC. The unit tests read the committed copies, so commit the new files if you regenerate them.
 
 ## Run the unit tests
 
@@ -58,6 +58,7 @@ These are the other messages:
 | Situation | Message |
 | --- | --- |
 | Corrupt or not a PKCS#12 file | This PKCS#12 file is corrupt or is not a PKCS#12 bundle. |
+| Blank password in OpenSSL's split encoding | This PKCS#12 file uses a blank-password encoding that this version of macOS cannot import. Export it again and set a password. |
 | Legacy RC2 or 3DES that this macOS cannot decrypt | This PKCS#12 file uses legacy RC2 or 3DES encryption, which this version of macOS cannot open. Export it again with AES-256. |
 | Corrupt or not a PKCS#7 file | This PKCS#7 file is corrupt or is not a PKCS#7 bundle. |
 | Signed or enveloped PKCS#7 | This PKCS#7 file is signed or enveloped data, not a certificate bundle. |
@@ -73,8 +74,9 @@ Open each file with File > Open, by dropping it on the window, and with Finder O
 | `leaf-aes256.p12` | All three | `test123` | One certificate, common name **CertRev Test Leaf**. The summary and the certificate list say **Private key: RSA 2048-bit**. RAW has Private Key rows Present = Yes, Type = RSA, Size = 2048-bit. No password and no key bytes anywhere on screen. Copy Certificate copies the certificate PEM only. |
 | `leaf-aes256.p12` | File > Open | `nope` | The sheet stays open and says **The password is incorrect.** The field is empty again. Nothing from the file is shown. |
 | `leaf-aes256.p12` | File > Open | `test123` after the wrong password above | The sheet closes and the leaf certificate opens, with the private-key line. |
-| `leaf-empty-password.p12` | All three | Leave the field blank and click Open | Same leaf certificate and **Private key: RSA 2048-bit**. |
+| `leaf-empty-password.p12` | All three | Leave the field blank and click Open | Same leaf certificate and **Private key: RSA 2048-bit**. This file's MAC was rewritten to the zero-length blank password that macOS imports. The AES encryption already uses that empty password. |
 | `leaf-empty-password.p12` | File > Open | `test123` | **The password is incorrect.** |
+| `leaf-empty-password-openssl3.p12` | File > Open | Leave the field blank | **This PKCS#12 file uses a blank-password encoding that this version of macOS cannot import. Export it again and set a password.** Not the corrupt-file message, and not the wrong-password message. This is OpenSSL 3's unmodified export: two null bytes in the MAC, and a zero-length password in the AES encryption. |
 | `leaf-legacy-rc2-3des.p12` | All three | `test123` | Either the leaf certificate and **Private key: RSA 2048-bit**, or the legacy RC2/3DES message. Not the wrong-password message. |
 | `leaf-legacy-rc2-3des.p12` | File > Open | `nope` | **The password is incorrect.** |
 | `chain-aes256.p12` | All three | `test123` | Three certificates, in this order: **CertRev Test Leaf**, **CertRev Test Intermediate CA**, **CertRev Test Root CA**. Only the leaf shows a private key. None of them say **Doesn't chain**. |
@@ -112,6 +114,7 @@ PKCS#7 from a CA:
 
 ## Limits worth knowing
 
+- A blank password is two PKCS#12 passwords: no password (zero bytes) and an empty BMPString (two null bytes). OpenSSL 3 writes the two null bytes into the MAC and uses zero bytes for AES. `SecPKCS12Import` treats a blank passphrase as zero bytes for both, so that unmodified file cannot be opened. CertRev reports that encoding instead of calling the file corrupt. `leaf-empty-password.p12` is the same export with the MAC rewritten to the zero-length form. The script needs `python3` for that rewrite.
 - Legacy RC2/3DES support depends on the macOS version. CertRev checks the password against the PKCS#12 MAC first, then asks Security.framework to decrypt. If macOS can still decrypt those ciphers, the file opens. If it cannot, the message names RC2/3DES instead of blaming the password.
 - A PKCS#12 MAC with more than 5,000,000 iterations is not checked in the app. `SecPKCS12Import` still decides, and the wrong-password and legacy messages are less precise for that file.
 - A PKCS#12 file with no MAC at all uses the status code from `SecPKCS12Import`. A wrong password on that kind of file can be reported as corrupt if macOS does not return an authentication failure.

@@ -46,6 +46,20 @@ final class PKCSBundleTests: XCTestCase {
         }
     }
 
+    func testOpenSSL3SplitBlankPasswordIsNotReportedAsCorrupt() throws {
+        let name = "leaf-empty-password-openssl3.p12"
+        let data = try PKCSFixtures.data(name)
+        XCTAssertThrowsError(try CertificateLoader.load(data: data, fileName: name, password: "")) { error in
+            XCTAssertEqual(error as? CertificateLoadError, .pkcs12BlankPasswordEncoding)
+            XCTAssertTrue(error.localizedDescription.contains("blank-password"))
+            XCTAssertFalse(error.localizedDescription.contains("corrupt"))
+            XCTAssertFalse(error.localizedDescription.contains(password))
+        }
+        XCTAssertThrowsError(try CertificateLoader.load(data: data, fileName: name, password: password)) { error in
+            XCTAssertEqual(error as? CertificateLoadError, .pkcs12WrongPassword)
+        }
+    }
+
     func testLegacyEncryptionIsClassifiedSeparatelyFromThePassword() throws {
         let data = try PKCSFixtures.data("leaf-legacy-rc2-3des.p12")
         XCTAssertTrue(PKCS12Reader.usesLegacyEncryption(data))

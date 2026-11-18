@@ -2,10 +2,16 @@
 # Regenerates the throwaway PKCS#12 and PKCS#7 fixtures used by MacOSCertRevTests.
 #
 # The certificates and private keys are generated here and are not secrets.
-# The PKCS#12 password is test123, or empty for the empty-password file.
+# The PKCS#12 password is test123, or empty for the empty-password files.
 # Works with the LibreSSL openssl at /usr/bin/openssl and with Homebrew OpenSSL 3.
 # OpenSSL 3 needs -legacy to write RC2/3DES; LibreSSL still writes those by default
 # and rejects -legacy.
+#
+# Rewriting the blank-password MAC needs python3. OpenSSL 3's `pass:` export
+# puts two null bytes in the MAC and a zero-length password in the AES
+# encryption. SecPKCS12Import treats a blank passphrase as zero-length for
+# both, so the script keeps one unmodified OpenSSL file and rewrites the
+# other MAC to the zero-length form Apple accepts.
 
 set -euo pipefail
 
@@ -100,8 +106,6 @@ export_legacy() {
 
 export_modern "$out/leaf-aes256.p12" \
   -inkey leaf.key -in leaf.crt -name "CertRev Test Leaf" -passout pass:test123
-export_modern "$out/leaf-empty-password.p12" \
-  -inkey leaf.key -in leaf.crt -name "CertRev Test Leaf" -passout pass:
 export_legacy "$out/leaf-legacy-rc2-3des.p12" \
   -inkey leaf.key -in leaf.crt -name "CertRev Test Leaf" -passout pass:test123
 export_modern "$out/chain-aes256.p12" \
@@ -134,6 +138,92 @@ cp intermediate.key "$out/TEST-ONLY-intermediate.key.pem"
 cp leaf.key "$out/TEST-ONLY-leaf.key.pem"
 cp unrelated.key "$out/TEST-ONLY-unrelated.key.pem"
 chmod 644 "$out"/*
+
+# Replace the MAC digest so it matches a zero-length password. The AES
+# encryption is left as OpenSSL wrote it (PBKDF2 over a zero-length password).
+rewrite_blank_password_mac() {
+  local file="$1"
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is required to rewrite the blank-password MAC in $file" >&2
+    exit 1
+  fi
+  python3 - "$file" <<'PY'
+import hashlib, hmac, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+data = bytearray(path.read_bytes())
+
+def parse_tl(buf, i):
+    tag = buf[i]
+    i += 1
+    n = buf[i]
+    i += 1
+    if n & 0x80:
+        length_bytes = n & 0x7F
+        length = int.from_bytes(buf[i:i + length_bytes], "big")
+        i += length_bytes
+    else:
+        length = n
+    return tag, i, i + length
+
+def children(buf, start, end):
+    nodes = []
+    index = start
+    while index < end:
+        tag, content, end_index = parse_tl(buf, index)
+        nodes.append((tag, content, end_index))
+        index = end_index
+    return nodes
+
+_, content, end = parse_tl(data, 0)
+parts = children(data, content, end)
+auth = children(data, parts[1][1], parts[1][2])
+explicit = children(data, auth[1][1], auth[1][2])
+if explicit[0][0] != 0x04:
+    raise SystemExit("blank-password file has no authenticated-safe octet string")
+mac_input = bytes(data[explicit[0][1]:explicit[0][2]])
+mac_parts = children(data, parts[2][1], parts[2][2])
+digest_info = children(data, mac_parts[0][1], mac_parts[0][2])
+digest_start, digest_end = digest_info[1][1], digest_info[1][2]
+if digest_end - digest_start != 32:
+    raise SystemExit("blank-password MAC is not SHA-256")
+salt = bytes(data[mac_parts[1][1]:mac_parts[1][2]])
+iterations = int.from_bytes(data[mac_parts[2][1]:mac_parts[2][2]], "big")
+
+def expand(src, block):
+    if not src:
+        return b""
+    size = ((len(src) + block - 1) // block) * block
+    out = b""
+    while len(out) < size:
+        out += src
+    return out[:size]
+
+def derive(password):
+    block = 64
+    diversified = bytes([3]) * block
+    material = bytearray(expand(salt, block) + expand(password, block))
+    digest = hashlib.sha256(diversified + material).digest()
+    for _ in range(1, iterations):
+        digest = hashlib.sha256(digest).digest()
+    return digest
+
+zero_length = hmac.new(derive(b""), mac_input, hashlib.sha256).digest()
+two_null = hmac.new(derive(b"\x00\x00"), mac_input, hashlib.sha256).digest()
+current = bytes(data[digest_start:digest_end])
+if current != two_null:
+    raise SystemExit("expected OpenSSL's two-null blank-password MAC before rewriting")
+data[digest_start:digest_end] = zero_length
+path.write_bytes(data)
+PY
+}
+
+export_modern "$out/leaf-empty-password-openssl3.p12" \
+  -inkey leaf.key -in leaf.crt -name "CertRev Test Leaf" -passout pass:
+# Unmodified OpenSSL export. Its MAC is the two-null BMPString, which
+# SecPKCS12Import rejects for a blank passphrase.
+cp "$out/leaf-empty-password-openssl3.p12" "$out/leaf-empty-password.p12"
+rewrite_blank_password_mac "$out/leaf-empty-password.p12"
+chmod 644 "$out/leaf-empty-password.p12" "$out/leaf-empty-password-openssl3.p12"
 
 info_for() {
   local file="$1"
@@ -197,12 +287,24 @@ scripts/make-test-fixtures.sh
 The script uses whichever `openssl` is on `PATH`. LibreSSL (the `/usr/bin/openssl`
 shipped with macOS) and Homebrew OpenSSL 3 are both supported. OpenSSL 3 writes
 the RC2/3DES file with `-legacy`. LibreSSL still writes that older encryption by
-default and does not accept `-legacy`.
+default and does not accept `-legacy`. Rewriting the blank-password MAC also
+needs `python3`.
 
 ## Password
 
-`test123` for every PKCS#12 file except `leaf-empty-password.p12`, which has an
-empty password. Open that file by leaving the password field blank.
+`test123` for every PKCS#12 file except the two blank-password files. Open those
+by leaving the password field blank.
+
+`leaf-empty-password.p12` is the OpenSSL 3 AES export with its MAC replaced by
+the zero-length password form. That is the blank passphrase `SecPKCS12Import`
+uses, and the AES encryption already uses that same empty password. This is the
+file the app is expected to open.
+
+`leaf-empty-password-openssl3.p12` is the same export before that rewrite.
+OpenSSL writes two null bytes into the MAC and a zero-length password into the
+AES encryption. A blank passphrase on macOS does not match that MAC, so CertRev
+reports a blank-password encoding it cannot import instead of calling the file
+corrupt.
 
 ## Files
 
@@ -212,7 +314,8 @@ empty password. Open that file by leaving the password field blank.
 | `unrelated.crt` | A self-signed certificate that does not chain to the others. |
 | `TEST-ONLY-*.key.pem` | Throwaway PKCS#8 private keys for those certificates. |
 | `leaf-aes256.p12` | Leaf certificate and its private key. AES-256, password `test123`. |
-| `leaf-empty-password.p12` | Same leaf. AES-256, empty password. |
+| `leaf-empty-password.p12` | Same leaf. AES-256, blank password, MAC rewritten to the zero-length form macOS imports. |
+| `leaf-empty-password-openssl3.p12` | Same leaf before that rewrite. OpenSSL's split blank-password encoding. |
 | `leaf-legacy-rc2-3des.p12` | Same leaf. Legacy RC2 (certificates) and 3DES (private key), password `test123`. |
 | `chain-aes256.p12` | Leaf, intermediate, and root, plus the leaf private key. AES-256, password `test123`. |
 | `chain-aes256.pfx` | A copy of `chain-aes256.p12`. |
