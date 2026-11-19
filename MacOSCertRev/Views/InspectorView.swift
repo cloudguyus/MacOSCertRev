@@ -2,18 +2,24 @@ import SwiftUI
 
 struct InspectorView: View {
     @Bindable var model: InspectorModel
+    /// Visible width of the detail pane, from the split view, so subject text wraps instead of running past the edge.
+    @State private var detailPaneWidth: CGFloat = 0
 
     var body: some View {
         GeometryReader { proxy in
             HSplitView {
                 if model.certificates.count > 1 {
                     certificateList
-                        .frame(minWidth: 200, idealWidth: 240, maxWidth: 320)
+                        .frame(minWidth: 220, idealWidth: 320, maxWidth: 420)
                         .frame(height: proxy.size.height)
                 }
                 VStack(spacing: 0) {
                     summary
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .frame(
+                            minWidth: 0,
+                            maxWidth: detailPaneWidth > 1 ? detailPaneWidth : .infinity,
+                            alignment: .topLeading
+                        )
                     Divider()
                     detail
                         // A zero minimum stops the system certificate view's tall
@@ -26,9 +32,15 @@ struct InspectorView: View {
                 }
                 // Height comes from the window. Width is left to the split view:
                 // pinning this column to the full window width draws it over the sidebar.
-                .frame(maxWidth: .infinity)
+                .frame(minWidth: 0, maxWidth: .infinity)
                 .frame(height: proxy.size.height, alignment: .top)
+                .background(SplitSubviewWidth { width in
+                    if abs(width - detailPaneWidth) > 0.5 {
+                        detailPaneWidth = width
+                    }
+                })
             }
+            .background(SplitViewAutosave(name: "CertRevInspectorSplit"))
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
         }
     }
@@ -114,7 +126,10 @@ struct InspectorView: View {
             Text(certificate.summary.commonName)
                 .font(.title2.bold())
                 .textSelection(.enabled)
-                .lineLimit(2)
+                .lineLimit(nil)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             trustBadge
         }
     }
@@ -168,6 +183,8 @@ struct InspectorView: View {
             Text(value)
                 .font(monospaced ? .body.monospaced() : .body)
                 .textSelection(.enabled)
+                .lineLimit(nil)
+                .multilineTextAlignment(.leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         }
@@ -214,5 +231,50 @@ struct InspectorView: View {
     private var certificateText: String? {
         guard let der = model.selectedCertificate?.der else { return nil }
         return PEMEncoding.certificate(from: der)
+    }
+}
+
+/// Remembers the sidebar divider in user defaults.
+private struct SplitViewAutosave: NSViewRepresentable {
+    var name: String
+
+    func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let split = nsView.enclosingSplitView(), split.autosaveName != name else { return }
+            split.autosaveName = name
+        }
+    }
+}
+
+/// Reports the width the split view actually assigned to this column.
+private struct SplitSubviewWidth: NSViewRepresentable {
+    var onChange: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> NSView { NSView(frame: .zero) }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            var view: NSView? = nsView
+            while let current = view {
+                if current.superview is NSSplitView {
+                    onChange(current.bounds.width)
+                    return
+                }
+                view = current.superview
+            }
+        }
+    }
+}
+
+private extension NSView {
+    func enclosingSplitView() -> NSSplitView? {
+        var view: NSView? = self
+        while let current = view {
+            if let split = current as? NSSplitView { return split }
+            view = current.superview
+        }
+        return nil
     }
 }

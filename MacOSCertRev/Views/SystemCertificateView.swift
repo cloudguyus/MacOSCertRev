@@ -25,17 +25,19 @@ struct SystemCertificateView: NSViewRepresentable {
         view.setCertificate(certificate)
         view.setDisplayDetails(true)
         view.setDetailsDisclosed(true)
-        // SFCertificateView's public API is setCertificate(_:) plus policies and
-        // display flags. It evaluates trust for that one certificate. There is no
-        // public method that accepts a SecTrust or the other certificates in a
-        // bundle. SFCertificateTrustPanel and SFCertificatePanel do take a trust
-        // or a certificate list, but they are sheets, not this embedded panel.
-        // Hiding the panel's trust line leaves the badge and Certification Path,
-        // which share one evaluation, as the only trust indicators.
-        view.setDisplayTrust(false)
         // Trust editing writes the user's trust settings. This app only inspects.
         view.setEditableTrust(false)
+        hideTrustLine(view)
         scroll.configuredDER = der
+    }
+
+    /// The panel evaluates the one certificate it was given, so its trust sentence
+    /// can disagree with the badge. There is no public API to pass the rest of the
+    /// bundle. `setDisplayTrust(false)` is the documented way to hide that sentence.
+    /// `setCertificate` can turn it back on once the view is in a window, so layout
+    /// applies the flag again.
+    static func hideTrustLine(_ view: SFCertificateView) {
+        view.setDisplayTrust(false)
     }
 }
 
@@ -78,7 +80,13 @@ final class CertificateScrollView: NSScrollView {
 
     override func layout() {
         super.layout()
+        SystemCertificateView.hideTrustLine(certificateView)
         resizeDocument()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        SystemCertificateView.hideTrustLine(certificateView)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
