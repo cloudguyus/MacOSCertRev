@@ -7,13 +7,13 @@ struct ContentView: View {
         Group {
             if model.certificates.isEmpty {
                 emptyState
+                    .navigationTitle("CertRev")
+                    .toolbar { InspectorToolbar(model: model) }
             } else {
                 InspectorView(model: model)
             }
         }
         .frame(minWidth: 880, minHeight: 520)
-        .navigationTitle(model.fileName ?? "CertRev")
-        .toolbar { toolbar }
         .dropDestination(for: URL.self) { urls, _ in
             guard let url = urls.first else { return false }
             model.load(url: url)
@@ -64,10 +64,15 @@ struct ContentView: View {
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
 
-    @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
-        ToolbarItemGroup {
+/// Open and Copy stay at the trailing edge of the detail toolbar, clear of the title.
+@MainActor
+struct InspectorToolbar: ToolbarContent {
+    @Bindable var model: InspectorModel
+
+    var body: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
             Button("Open", systemImage: "folder") {
                 model.openPanel()
             }

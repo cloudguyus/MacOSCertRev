@@ -6,43 +6,62 @@ struct InspectorView: View {
     @State private var detailPaneWidth: CGFloat = 0
 
     var body: some View {
-        GeometryReader { proxy in
-            HSplitView {
-                if model.certificates.count > 1 {
-                    certificateList
-                        .frame(minWidth: 220, idealWidth: 320, maxWidth: 420)
-                        .frame(height: proxy.size.height)
-                }
-                VStack(spacing: 0) {
-                    summary
-                        .frame(
-                            minWidth: 0,
-                            maxWidth: detailPaneWidth > 1 ? detailPaneWidth : .infinity,
-                            alignment: .topLeading
-                        )
-                    Divider()
-                    detail
-                        // A zero minimum stops the system certificate view's tall
-                        // fitting size from pushing the summary out of the window.
-                        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                        .clipped()
-                    Divider()
-                    PathView(report: model.trust)
-                        .frame(height: 148)
-                }
-                // Height comes from the window. Width is left to the split view:
-                // pinning this column to the full window width draws it over the sidebar.
-                .frame(minWidth: 0, maxWidth: .infinity)
-                .frame(height: proxy.size.height, alignment: .top)
-                .background(SplitSubviewWidth { width in
-                    if abs(width - detailPaneWidth) > 0.5 {
-                        detailPaneWidth = width
-                    }
-                })
+        if model.certificates.count > 1 {
+            NavigationSplitView {
+                certificateList
+                    .navigationSplitViewColumnWidth(min: 220, ideal: 320, max: 420)
+                    // The sidebar segment keeps the traffic lights only. The filename
+                    // belongs to the detail column, so it cannot cross the divider.
+                    .toolbar(removing: .title)
+                    .background(SplitViewAutosave(name: "CertRevInspectorSplit"))
+            } detail: {
+                detailColumn
             }
-            .background(SplitViewAutosave(name: "CertRevInspectorSplit"))
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+            .navigationSplitViewStyle(.balanced)
+        } else {
+            detailColumn
         }
+    }
+
+    /// The certificate summary, system panel, and path. Unchanged aside from living
+    /// in the detail column so the toolbar title is leading-aligned there.
+    private var detailColumn: some View {
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                summary
+                    .frame(
+                        minWidth: 0,
+                        maxWidth: detailPaneWidth > 1 ? detailPaneWidth : (proxy.size.width > 1 ? proxy.size.width : .infinity),
+                        alignment: .topLeading
+                    )
+                Divider()
+                detail
+                    // A zero minimum stops the system certificate view's tall
+                    // fitting size from pushing the summary out of the window.
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                    .clipped()
+                Divider()
+                PathView(report: model.trust)
+                    .frame(height: 148)
+            }
+            // Height comes from this column. Width is the column's own width:
+            // pinning it to the window draws it over the sidebar.
+            .frame(minWidth: 0, maxWidth: .infinity)
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
+            .background(SplitSubviewWidth { width in
+                if abs(width - detailPaneWidth) > 0.5 {
+                    detailPaneWidth = width
+                }
+            })
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle(documentTitle)
+        .background(DetailColumnTitle(title: documentTitle))
+        .toolbar { InspectorToolbar(model: model) }
+    }
+
+    private var documentTitle: String {
+        model.fileName ?? "CertRev"
     }
 
     private var certificateList: some View {
@@ -274,6 +293,84 @@ private extension NSView {
         while let current = view {
             if let split = current as? NSSplitView { return split }
             view = current.superview
+        }
+        return nil
+    }
+
+    func firstTextField(matching title: String) -> NSTextField? {
+        for subview in subviews {
+            if let field = subview as? NSTextField, field.stringValue == title {
+                return field
+            }
+            if let found = subview.firstTextField(matching: title) {
+                return found
+            }
+        }
+        return nil
+    }
+}
+
+/// Keeps the Window menu and Mission Control title on the filename, and truncates
+/// the toolbar title in the middle when the detail column is narrow.
+private struct DetailColumnTitle: NSViewRepresentable {
+    var title: String
+
+    func makeNSView(context: Context) -> DetailColumnTitleView {
+        let view = DetailColumnTitleView(frame: .zero)
+        view.title = title
+        return view
+    }
+
+    func updateNSView(_ view: DetailColumnTitleView, context: Context) {
+        view.title = title
+    }
+}
+
+private final class DetailColumnTitleView: NSView {
+    var title = "" {
+        didSet {
+            guard oldValue != title else { return }
+            apply()
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        apply()
+    }
+
+    override func layout() {
+        super.layout()
+        applyTruncation()
+    }
+
+    private func apply() {
+        guard let window, !title.isEmpty else { return }
+        if window.title != title {
+            window.title = title
+        }
+        applyTruncation()
+    }
+
+    private func applyTruncation() {
+        guard let window, !title.isEmpty, let field = window.documentTitleField(matching: title) else { return }
+        if field.maximumNumberOfLines != 1 {
+            field.maximumNumberOfLines = 1
+        }
+        guard let cell = field.cell, cell.lineBreakMode != .byTruncatingMiddle else { return }
+        cell.lineBreakMode = .byTruncatingMiddle
+    }
+}
+
+private extension NSWindow {
+    /// The toolbar title lives in the titlebar, next to the content view. Skip the
+    /// content so a certificate field is not treated as the window title.
+    func documentTitleField(matching title: String) -> NSTextField? {
+        guard let frame = contentView?.superview else { return nil }
+        for subview in frame.subviews where subview !== contentView {
+            if let field = subview.firstTextField(matching: title) {
+                return field
+            }
         }
         return nil
     }
