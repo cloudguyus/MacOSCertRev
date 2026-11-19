@@ -17,6 +17,30 @@
 				<string>com.cloudguyus.pem-certificate</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>PKCS#12</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.rsa.pkcs-12</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>PKCS#7 Certificate Bundle</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.rsa.pkcs-7</string>
+			</array>
+		</dict>
 	</array>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
@@ -55,6 +79,46 @@
 				<array>
 					<string>pem</string>
 				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.rsa.pkcs-12</string>
+			<key>UTTypeDescription</key>
+			<string>PKCS#12</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>p12</string>
+					<string>pfx</string>
+				</array>
+				<key>public.mime-type</key>
+				<string>application/x-pkcs12</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.rsa.pkcs-7</string>
+			<key>UTTypeDescription</key>
+			<string>PKCS#7 Certificate Bundle</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>p7b</string>
+					<string>p7c</string>
+				</array>
+				<key>public.mime-type</key>
+				<string>application/x-pkcs7-certificates</string>
 			</dict>
 		</dict>
 	</array>

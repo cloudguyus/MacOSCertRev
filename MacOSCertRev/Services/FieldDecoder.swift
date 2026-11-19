@@ -31,7 +31,67 @@ enum FieldDecoder {
             pemSection(der),
         ]
 
-        return ParsedCertificate(id: index, der: der, summary: summary, sections: sections)
+        return ParsedCertificate(
+            id: index,
+            der: der,
+            summary: summary,
+            sections: sections,
+            privateKey: nil,
+            unchained: false
+        )
+    }
+
+    /// Adds bundle facts to the field list. The private-key rows are presence, type, and size only.
+    static func annotate(
+        _ certificate: ParsedCertificate,
+        privateKey: PrivateKeySummary?,
+        unchained: Bool
+    ) -> ParsedCertificate {
+        var sections = certificate.sections
+        if unchained {
+            sections.insert(
+                FieldSection(
+                    id: "bundle",
+                    title: "Bundle",
+                    rows: [
+                        FieldRow(
+                            id: "bundle.chain",
+                            title: "Chain",
+                            value: "Doesn't chain to another certificate in this file",
+                            subtitle: nil
+                        ),
+                    ]
+                ),
+                at: 0
+            )
+        }
+        if let privateKey {
+            sections.insert(
+                FieldSection(
+                    id: "privateKey",
+                    title: "Private Key",
+                    rows: [
+                        FieldRow(id: "privateKey.present", title: "Present", value: "Yes", subtitle: nil),
+                        FieldRow(id: "privateKey.type", title: "Type", value: privateKey.algorithm, subtitle: nil),
+                        FieldRow(
+                            id: "privateKey.size",
+                            title: "Size",
+                            value: privateKey.sizeBits > 0 ? "\(privateKey.sizeBits)-bit" : "Unknown",
+                            subtitle: nil
+                        ),
+                    ]
+                ),
+                at: 0
+            )
+        }
+        return ParsedCertificate(
+            id: certificate.id,
+            der: certificate.der,
+            summary: certificate.summary,
+            sections: sections,
+            privateKey: privateKey,
+            unchained: unchained
+        )
     }
 
     private static func pemSection(_ der: Data) -> FieldSection {

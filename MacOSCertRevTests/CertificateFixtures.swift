@@ -51,6 +51,97 @@ enum CertificateFixtures {
         return "-----BEGIN TRUSTED CERTIFICATE-----\n\(encoded)\n-----END TRUSTED CERTIFICATE-----\n"
     }
 
+    struct Hierarchy {
+        var root: Data
+        var intermediate: Data
+        var leaf: Data
+    }
+
+    /// A leaf signed by an intermediate, signed by a root. The root is not an intermediate.
+    static func hierarchy() throws -> Hierarchy {
+        let rootKey = Certificate.PrivateKey(P256.Signing.PrivateKey())
+        let intermediateKey = Certificate.PrivateKey(P256.Signing.PrivateKey())
+        let leafKey = Certificate.PrivateKey(P256.Signing.PrivateKey())
+        let rootName = try distinguishedName("CertRev Trust Root")
+        let intermediateName = try distinguishedName("CertRev Trust Intermediate")
+        let leafName = try distinguishedName("CertRev Trust Leaf")
+        let rootSKI = SubjectKeyIdentifier(hash: rootKey.publicKey)
+        let intermediateSKI = SubjectKeyIdentifier(hash: intermediateKey.publicKey)
+
+        let root = try issue(
+            subject: rootName,
+            issuer: rootName,
+            serial: 0x21,
+            publicKey: rootKey.publicKey,
+            signer: rootKey,
+            extensions: try Certificate.Extensions {
+                Critical(BasicConstraints.isCertificateAuthority(maxPathLength: nil))
+                Critical(KeyUsage(digitalSignature: true, keyCertSign: true))
+                rootSKI
+            }
+        )
+        let intermediate = try issue(
+            subject: intermediateName,
+            issuer: rootName,
+            serial: 0x22,
+            publicKey: intermediateKey.publicKey,
+            signer: rootKey,
+            extensions: try Certificate.Extensions {
+                Critical(BasicConstraints.isCertificateAuthority(maxPathLength: 0))
+                Critical(KeyUsage(digitalSignature: true, keyCertSign: true))
+                intermediateSKI
+                AuthorityKeyIdentifier(keyIdentifier: rootSKI.keyIdentifier)
+            }
+        )
+        let leaf = try issue(
+            subject: leafName,
+            issuer: intermediateName,
+            serial: 0x23,
+            publicKey: leafKey.publicKey,
+            signer: intermediateKey,
+            extensions: try Certificate.Extensions {
+                Critical(BasicConstraints.notCertificateAuthority)
+                Critical(KeyUsage(digitalSignature: true))
+                AuthorityKeyIdentifier(keyIdentifier: intermediateSKI.keyIdentifier)
+            }
+        )
+        return Hierarchy(root: root, intermediate: intermediate, leaf: leaf)
+    }
+
+    private static func distinguishedName(_ commonName: String) throws -> DistinguishedName {
+        try DistinguishedName {
+            CountryName("US")
+            OrganizationName("CertRev")
+            CommonName(commonName)
+        }
+    }
+
+    private static func issue(
+        subject: DistinguishedName,
+        issuer: DistinguishedName,
+        serial: UInt8,
+        publicKey: Certificate.PublicKey,
+        signer: Certificate.PrivateKey,
+        extensions: Certificate.Extensions
+    ) throws -> Data {
+        let now = Date()
+        let certificate = try Certificate(
+            version: .v3,
+            serialNumber: Certificate.SerialNumber(bytes: [serial, 0x02, 0x03, 0x04]),
+            publicKey: publicKey,
+            notValidBefore: now.addingTimeInterval(-3_600),
+            notValidAfter: now.addingTimeInterval(86_400 * 30),
+            issuer: issuer,
+            subject: subject,
+            signatureAlgorithm: .ecdsaWithSHA256,
+            extensions: extensions,
+            issuerPrivateKey: signer
+        )
+        var serializer = DER.Serializer()
+        try serializer.serialize(certificate)
+        return Data(serializer.serializedBytes)
+    }
+
     private static func make(commonName: String, serial: UInt8, extensions: Certificate.Extensions) throws -> Data {
         let privateKey = Certificate.PrivateKey(P256.Signing.PrivateKey())
         let name = try DistinguishedName {

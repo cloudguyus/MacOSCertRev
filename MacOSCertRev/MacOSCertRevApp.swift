@@ -12,6 +12,8 @@ struct MacOSCertRevApp: App {
                 .background(WindowMinimumSize(size: NSSize(width: 980, height: 740)))
         }
         .defaultSize(width: 1080, height: 760)
+        // One toolbar, split with the sidebar, so the document title sits in the detail column.
+        .windowToolbarStyle(.unified)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Open…") {
