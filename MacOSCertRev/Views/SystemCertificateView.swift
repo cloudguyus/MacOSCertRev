@@ -18,17 +18,6 @@ struct SystemCertificateView: NSViewRepresentable {
         scroll.layoutSubtreeIfNeeded()
     }
 
-    /// Take the space SwiftUI offers. The certificate panel's own fitting size is
-    /// tall enough to cover the header when the subject wraps or a sidebar is open.
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: CertificateScrollView, context: Context) -> CGSize? {
-        CGSize(width: finite(proposal.width, fallback: 640), height: finite(proposal.height, fallback: 480))
-    }
-
-    private func finite(_ value: CGFloat?, fallback: CGFloat) -> CGFloat {
-        guard let value, value.isFinite, value > 1 else { return fallback }
-        return value
-    }
-
     private func configure(_ scroll: CertificateScrollView) {
         guard let certificate = SecCertificateCreateWithData(nil, der as CFData) else { return }
         let view = scroll.certificateView
@@ -56,12 +45,14 @@ final class CertificateScrollView: NSScrollView {
     let certificateView = SFCertificateView()
     var configuredDER: Data?
     private var resizing = false
+    private var revealTopOnNextResize = true
     private var measuredWidth: CGFloat = 0
     private var measuredHeight: CGFloat = 0
 
     func invalidateMeasurement() {
         measuredWidth = 0
         measuredHeight = 0
+        revealTopOnNextResize = true
     }
 
     override var intrinsicContentSize: NSSize {
@@ -100,6 +91,7 @@ final class CertificateScrollView: NSScrollView {
         let width = contentSize.width > 1 ? contentSize.width : bounds.width
         guard width > 1 else { return }
         if abs(width - measuredWidth) < 0.5, abs(certificateView.frame.height - measuredHeight) < 0.5 {
+            revealTopIfNeeded()
             return
         }
         resizing = true
@@ -110,5 +102,22 @@ final class CertificateScrollView: NSScrollView {
         measuredWidth = width
         measuredHeight = height
         certificateView.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        revealTopIfNeeded()
+    }
+
+    private func revealTopIfNeeded() {
+        guard revealTopOnNextResize, contentView.bounds.height > 1 else { return }
+        revealTop()
+        revealTopOnNextResize = false
+    }
+
+    /// A tall document in this scroll view otherwise opens on its bottom edge,
+    /// which is the fingerprints section of the certificate panel.
+    private func revealTop() {
+        guard let document = documentView else { return }
+        let clipHeight = contentView.bounds.height
+        let y = document.isFlipped ? 0 : max(0, document.frame.height - clipHeight)
+        contentView.scroll(to: NSPoint(x: 0, y: y))
+        reflectScrolledClipView(contentView)
     }
 }

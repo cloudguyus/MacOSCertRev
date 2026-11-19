@@ -9,36 +9,28 @@ struct InspectorView: View {
                 if model.certificates.count > 1 {
                     certificateList
                         .frame(minWidth: 200, idealWidth: 240, maxWidth: 320)
-                        .frame(maxHeight: .infinity)
+                        .frame(height: proxy.size.height)
                 }
-                inspectorColumn
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .layoutPriority(1)
-            }
-            .frame(width: proxy.size.width, height: proxy.size.height)
-        }
-    }
-
-    /// The header keeps its own height. The certificate panel only gets the space
-    /// below it, so a long subject or the sidebar cannot pull the panel up over the header.
-    private var inspectorColumn: some View {
-        VStack(spacing: 0) {
-            summary
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .background(Color(nsColor: .windowBackgroundColor))
-                .zIndex(1)
-            Divider()
-            detail
-                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                .layoutPriority(1)
-                .clipped()
-            Divider()
-            PathView(report: model.trust)
-                .frame(height: 148)
+                VStack(spacing: 0) {
+                    summary
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    Divider()
+                    detail
+                        // A zero minimum stops the system certificate view's tall
+                        // fitting size from pushing the summary out of the window.
+                        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                        .clipped()
+                    Divider()
+                    PathView(report: model.trust)
+                        .frame(height: 148)
+                }
+                // Height comes from the window. Width is left to the split view:
+                // pinning this column to the full window width draws it over the sidebar.
                 .frame(maxWidth: .infinity)
+                .frame(height: proxy.size.height, alignment: .top)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var certificateList: some View {
