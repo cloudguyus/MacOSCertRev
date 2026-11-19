@@ -27,7 +27,7 @@ struct SystemCertificateView: NSViewRepresentable {
         view.setDetailsDisclosed(true)
         // Trust editing writes the user's trust settings. This app only inspects.
         view.setEditableTrust(false)
-        hideTrustLine(view)
+        Self.hideTrustLine(view)
         scroll.configuredDER = der
     }
 
