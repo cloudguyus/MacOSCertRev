@@ -66,4 +66,4 @@ MIT. Copyright (c) 2026 cloudguyus. Copies of this code keep that copyright noti
 
 ## Publishing a version
 
-Bump `MARKETING_VERSION` in the Xcode project so it matches the tag, commit, and push a tag such as `v1.0.1`. The release workflow builds a universal app (arm64 and x86_64), publishes `CertRev-1.0.1.zip` on GitHub, and updates the Homebrew tap checksum.
+Bump `MARKETING_VERSION` in the Xcode project so it matches the tag, commit, and push a tag such as `v1.1.0`. The release workflow builds a universal app (arm64 and x86_64), publishes `CertRev-1.1.0.zip` on GitHub, and updates the Homebrew tap checksum.
