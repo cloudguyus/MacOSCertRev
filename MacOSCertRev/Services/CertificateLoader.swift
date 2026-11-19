@@ -56,6 +56,7 @@ enum CertificateLoader {
 
     private static func loadPKCS12(_ der: Data, password: String, fileName: String) throws -> [LoadedCertificate] {
         let imported = try PKCS12Reader.importBundle(der, password: password)
+        guard !imported.isEmpty else { throw CertificateLoadError.pkcs12Corrupt }
         return try imported.map { item in
             guard let validated = try? validatedDER(item.der, fileName: fileName) else {
                 throw CertificateLoadError.pkcs12Corrupt

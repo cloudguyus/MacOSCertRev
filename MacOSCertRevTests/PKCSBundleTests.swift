@@ -60,6 +60,26 @@ final class PKCSBundleTests: XCTestCase {
         }
     }
 
+    func testKeychainStyleRC240ECLeafImportsOrReportsLegacyEncryption() throws {
+        let name = "keychain-style-rc2-40-ec.p12"
+        let data = try PKCSFixtures.data(name)
+        XCTAssertTrue(CertificateLoader.needsPassword(data: data, fileName: name))
+        XCTAssertTrue(PKCS12Reader.usesLegacyEncryption(data))
+        do {
+            let loaded = try CertificateLoader.load(data: data, fileName: name, password: password)
+            XCTAssertFalse(loaded.isEmpty)
+            XCTAssertEqual(try names(loaded), ["CertRev Keychain Style"])
+            XCTAssertEqual(loaded[0].privateKey?.description, "EC 256-bit")
+            try assertNoSecret(in: loaded)
+        } catch let error as CertificateLoadError {
+            XCTAssertEqual(error, .pkcs12LegacyEncryption)
+            XCTAssertFalse(error.localizedDescription.contains(password))
+        }
+        XCTAssertThrowsError(try CertificateLoader.load(data: data, fileName: name, password: "nope")) { error in
+            XCTAssertEqual(error as? CertificateLoadError, .pkcs12WrongPassword)
+        }
+    }
+
     func testLegacyEncryptionIsClassifiedSeparatelyFromThePassword() throws {
         let data = try PKCSFixtures.data("leaf-legacy-rc2-3des.p12")
         XCTAssertTrue(PKCS12Reader.usesLegacyEncryption(data))
@@ -264,6 +284,33 @@ final class PKCS12PromptTests: XCTestCase {
         XCTAssertFalse(model.showsPasswordPrompt)
         XCTAssertTrue(model.certificates.isEmpty)
         XCTAssertEqual(model.errorMessage, CertificateLoadError.pkcs12Corrupt.localizedDescription)
+    }
+
+    func testKeychainStyleFilePromptsAndDoesNotLeaveAnEmptyDocument() async throws {
+        let model = InspectorModel(evaluateTrust: { @Sendable _, _, _ in
+            TrustReport(succeeded: false, message: "not used", chain: [])
+        })
+        let url = PKCSFixtures.url("keychain-style-rc2-40-ec.p12")
+        model.load(url: url)
+        XCTAssertTrue(model.showsPasswordPrompt)
+        XCTAssertTrue(model.certificates.isEmpty)
+        XCTAssertNil(model.fileName)
+        XCTAssertNil(model.errorMessage)
+
+        model.submitPKCS12Password("test123")
+        await model.waitForTrustEvaluation()
+        if let errorMessage = model.errorMessage {
+            XCTAssertEqual(errorMessage, CertificateLoadError.pkcs12LegacyEncryption.localizedDescription)
+            XCTAssertTrue(model.certificates.isEmpty)
+            XCTAssertNil(model.fileName)
+            XCTAssertFalse(model.showsPasswordPrompt)
+        } else {
+            XCTAssertFalse(model.showsPasswordPrompt)
+            XCTAssertEqual(model.fileName, "keychain-style-rc2-40-ec.p12")
+            XCTAssertFalse(model.certificates.isEmpty)
+            XCTAssertEqual(model.certificates.map(\.summary.commonName), ["CertRev Keychain Style"])
+            XCTAssertEqual(model.certificates[0].privateKey?.description, "EC 256-bit")
+        }
     }
 
     func testCancelPasswordPromptLeavesThePreviousCertificate() async throws {

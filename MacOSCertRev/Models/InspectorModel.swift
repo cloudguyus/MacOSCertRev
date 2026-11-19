@@ -113,6 +113,10 @@ final class InspectorModel {
                     unchained: item.unchained
                 )
             }
+            // An import that yields nothing must not become a titled, empty window.
+            guard !parsed.isEmpty else {
+                throw CertificateLoadError.notACertificate(fileName: name)
+            }
             dismissPasswordPrompt()
             fileName = name
             certificates = parsed
