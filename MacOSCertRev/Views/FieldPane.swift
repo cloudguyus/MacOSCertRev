@@ -8,35 +8,53 @@ struct FieldPane: View {
     }
 
     var body: some View {
-        HSplitView {
-            List(selection: $model.selectedFieldID) {
-                ForEach(sections) { section in
-                    Section(section.title) {
-                        ForEach(section.rows) { row in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(row.title)
-                                if let subtitle = row.subtitle {
-                                    Text(subtitle)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
+        GeometryReader { proxy in
+            let listWidth = fieldListWidth(available: proxy.size.width)
+            HStack(spacing: 0) {
+                fieldList
+                    .frame(width: listWidth, height: proxy.size.height)
+                Divider()
+                valuePane
+                    .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(height: proxy.size.height)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// 260 points when the detail pane has room for the value beside it.
+    /// The width is explicit, so the list cannot collapse to a sliver.
+    private func fieldListWidth(available: CGFloat) -> CGFloat {
+        let minimum: CGFloat = 200
+        let ideal: CGFloat = 260
+        let maximum: CGFloat = 420
+        let valueMinimum: CGFloat = 200
+        guard available > 1 else { return ideal }
+        let upper = min(maximum, max(minimum, available - valueMinimum))
+        return min(ideal, upper)
+    }
+
+    private var fieldList: some View {
+        List(selection: $model.selectedFieldID) {
+            ForEach(sections) { section in
+                Section(section.title) {
+                    ForEach(section.rows) { row in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.title)
+                            if let subtitle = row.subtitle {
+                                Text(subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
                             }
-                            .tag(row.id)
-                            .padding(.vertical, 2)
                         }
+                        .tag(row.id)
+                        .padding(.vertical, 2)
                     }
                 }
             }
-            .frame(minWidth: 200, idealWidth: 260, maxWidth: 420)
-            .frame(maxHeight: .infinity)
-            .background(RawFieldSplitClamp())
-
-            valuePane
-                .frame(minWidth: 200, maxWidth: .infinity, maxHeight: .infinity)
-                .layoutPriority(1)
         }
-        .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
@@ -63,68 +81,5 @@ struct FieldPane: View {
         } else {
             ContentUnavailableView("No Field", systemImage: "list.bullet.rectangle", description: Text("Select a field to see its value."))
         }
-    }
-}
-
-/// The field list's SwiftUI minimum is not the split view's divider position.
-/// This keeps that divider at a readable width, remembers a drag, and clamps it.
-private struct RawFieldSplitClamp: NSViewRepresentable {
-    func makeNSView(context: Context) -> RawFieldSplitClampView {
-        RawFieldSplitClampView(frame: .zero)
-    }
-
-    func updateNSView(_ view: RawFieldSplitClampView, context: Context) {
-        view.apply()
-    }
-}
-
-private final class RawFieldSplitClampView: NSView {
-    private let autosaveName = "CertRevRawFieldSplit"
-    private let minListWidth: CGFloat = 200
-    private let idealListWidth: CGFloat = 260
-    private let maxListWidth: CGFloat = 420
-    private let minValueWidth: CGFloat = 200
-    private var applying = false
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        apply()
-    }
-
-    override func layout() {
-        super.layout()
-        apply()
-    }
-
-    func apply() {
-        guard !applying, let split = enclosingSplit(), split.subviews.count > 1 else { return }
-        guard let listPane = split.subviews.first, isDescendant(of: listPane) else { return }
-        let total = split.bounds.width
-        guard total > 1 else { return }
-        applying = true
-        defer { applying = false }
-        if split.autosaveName != autosaveName {
-            split.autosaveName = autosaveName
-        }
-        split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
-        split.setHoldingPriority(.defaultLow, forSubviewAt: 1)
-        let current = listPane.frame.width
-        let maxAllowed = min(maxListWidth, max(minListWidth, total - minValueWidth))
-        let minAllowed = min(minListWidth, maxAllowed)
-        if current + 0.5 < minAllowed {
-            let target = min(max(idealListWidth, minAllowed), maxAllowed)
-            split.setPosition(target, ofDividerAt: 0)
-        } else if current > maxAllowed + 0.5 {
-            split.setPosition(maxAllowed, ofDividerAt: 0)
-        }
-    }
-
-    private func enclosingSplit() -> NSSplitView? {
-        var view: NSView? = self
-        while let current = view {
-            if let split = current as? NSSplitView { return split }
-            view = current.superview
-        }
-        return nil
     }
 }
